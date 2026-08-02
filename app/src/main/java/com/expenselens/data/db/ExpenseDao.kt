@@ -86,6 +86,12 @@ interface ExpenseDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLineItems(items: List<LineItemEntity>): List<Long>
 
+    @Query("DELETE FROM line_items")
+    suspend fun deleteAllLineItems()
+
+    @Query("DELETE FROM expenses")
+    suspend fun deleteAllExpenses()
+
     @Update
     suspend fun updateExpense(expense: ExpenseEntity)
 

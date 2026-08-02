@@ -56,15 +56,17 @@ class ReceiptParser(private val classifier: CategoryClassifier) {
     }
 
     private fun guessVendor(lines: List<String>): String {
-        // The vendor is almost always in the first 3 non-trivial lines.
+        // The vendor is the first non-trivial header line. Earlier versions
+        // took up to 3 lines and joined them, but that pulls the address
+        // and bill number into the vendor name on real receipts. Pick one.
         return lines
             .asSequence()
             .filter { it.length in 3..40 }
             .filter { !it.matches(Regex("^[\\d\\W]+$")) }
-            .take(3)
-            .joinToString(" ")
-            .takeIf { it.isNotBlank() }
-            ?: lines.firstOrNull().orEmpty()
+            .firstOrNull()
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: lines.firstOrNull().orEmpty().trim()
     }
 
     private fun guessBillNumber(text: String): String? {
@@ -108,14 +110,23 @@ class ReceiptParser(private val classifier: CategoryClassifier) {
     }
 
     private fun guessTotal(lines: List<String>, joined: String): Double {
-        val totals = listOf("total", "grand total", "amount due", "net amount", "total payable", "amount")
+        // Most specific first; longest keys must precede shorter ones, and
+        // we match with \b word boundaries so "subtotal" does NOT match the
+        // bare "total" key.
+        val totals = listOf(
+            "grand total", "total payable", "amount due", "net amount",
+            "total", "amount"
+        )
         val amounts = lines.mapNotNull { extractAmount(it) }
         if (amounts.isEmpty()) return 0.0
 
-        // 1) Prefer the largest "total" line.
+        // 1) Prefer the first line whose label matches a totals key
+        //    (with \b so "subtotal" doesn't match the bare "total" key).
         lines.forEach { line ->
             val low = line.lowercase(Locale.ENGLISH)
-            if (totals.any { low.contains(it) }) {
+            if (totals.any { key ->
+                    Regex("\\b" + Regex.escape(key) + "\\b").containsMatchIn(low)
+                }) {
                 extractAmount(line)?.let { return it }
             }
         }

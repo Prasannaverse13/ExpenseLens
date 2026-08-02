@@ -5,6 +5,9 @@ import com.expenselens.data.db.CategoryDao
 import com.expenselens.data.db.CategoryEntity
 import com.expenselens.data.db.ExpenseDao
 import com.expenselens.data.db.ExpenseEntity
+import com.expenselens.data.db.ExpenseLensDatabase
+import com.expenselens.data.db.ExpenseMetadataDao
+import com.expenselens.data.db.ExpenseMetadataEntity
 import com.expenselens.data.db.ExpenseWithLineItems
 import com.expenselens.data.db.LineItemDao
 import com.expenselens.data.db.LineItemEntity
@@ -13,9 +16,13 @@ import com.expenselens.data.db.VendorCorrectionEntity
 import com.expenselens.data.prefs.AppPreferences
 import com.expenselens.domain.model.CategoryType
 import com.expenselens.domain.model.Expense
+import com.expenselens.domain.model.LineItem
 import com.expenselens.domain.model.PaymentMethod
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
@@ -26,16 +33,47 @@ class ExpenseRepository(
     private val lineItemDao: LineItemDao,
     private val categoryDao: CategoryDao,
     private val vendorCorrectionDao: VendorCorrectionDao,
+    private val metadataDao: ExpenseMetadataDao? = null,
     private val preferences: AppPreferences
 ) {
 
     private val classifier = KeywordCategoryClassifier()
+
+    /**
+     * Emits on every write to the expense / line_item / category /
+     * vendor_correction tables. The [com.expenselens.data.sync.SyncCoordinator]
+     * subscribes to this, debounces a few seconds, then pushes the full
+     * state of the local DB to the user's Google Drive. The local DB is
+     * the live working copy; Drive is the durable mirror.
+     */
+    private val _dataChanges = MutableSharedFlow<Unit>(
+        replay = 0,
+        extraBufferCapacity = 16
+    )
+    val dataChanges: SharedFlow<Unit> = _dataChanges.asSharedFlow()
+
+    private suspend fun notifyChanged() {
+        _dataChanges.tryEmit(Unit)
+    }
 
     suspend fun seedCategoriesIfEmpty() = withContext(Dispatchers.IO) {
         if (categoryDao.getAll().isEmpty()) {
             val items = CategoryType.seedList.map { CategoryEntity(name = it.displayName) }
             categoryDao.insertAll(items)
         }
+    }
+
+    /**
+     * Back-fill any seed categories that don't yet exist in the DB. Runs on
+     * every app launch so newly-added categories (e.g. Maintenance) appear
+     * for existing installs without forcing a destructive migration.
+     */
+    suspend fun seedMissingCategories() = withContext(Dispatchers.IO) {
+        val existing = categoryDao.getAll().map { it.name.lowercase() }.toSet()
+        val missing = CategoryType.seedList
+            .filter { it.displayName.lowercase() !in existing }
+            .map { CategoryEntity(name = it.displayName) }
+        if (missing.isNotEmpty()) categoryDao.insertAll(missing)
     }
 
     suspend fun categories(): List<CategoryEntity> = withContext(Dispatchers.IO) {
@@ -92,6 +130,23 @@ class ExpenseRepository(
         expenseDao.replaceLineItems(id, items)
         // Learn from the user's final categorization.
         recordVendorCorrection(expense.vendor, majorCategoryName(expense))
+        // Persist any AI-extracted extras alongside the expense.
+        expense.metadata?.let { meta ->
+            metadataDao?.upsert(
+                ExpenseMetadataEntity(
+                    expenseId = id,
+                    merchantPhones = meta.merchantPhone.joinToString(",").ifBlank { null },
+                    merchantEmail = meta.merchantEmail,
+                    fssaiNumber = meta.fssaiNumber,
+                    visitTime = meta.visitTime,
+                    itemCount = meta.itemCount,
+                    source = meta.source
+                )
+            )
+        }
+        // Notify the Drive sync coordinator. The actual push is debounced
+        // (5s) so a burst of saves only triggers one Drive upload.
+        notifyChanged()
         id
     }
 
@@ -102,6 +157,50 @@ class ExpenseRepository(
         expenseDao.observeCategoryTotals(from, to)
     fun observeDailyTotals(from: LocalDate, to: LocalDate) =
         expenseDao.observeDailyTotals(from, to)
+
+    suspend fun vendorCorrections(): List<VendorCorrectionEntity> = withContext(Dispatchers.IO) {
+        vendorCorrectionDao.getAll()
+    }
+
+    /**
+     * Drop + re-insert the full category table. Used by the Drive restore
+     * path; not a user-facing operation.
+     */
+    suspend fun replaceAllCategories(items: List<CategoryEntity>) = withContext(Dispatchers.IO) {
+        categoryDao.deleteAll()
+        if (items.isNotEmpty()) categoryDao.replaceAll(items)
+        notifyChanged()
+    }
+
+    /**
+     * Drop + re-insert every expense and its line items. [expenses] is
+     * the list of rows to write; [bundles] pairs each expense with its
+     * line items (lineItem.expenseId is patched in after insert).
+     */
+    suspend fun replaceAllExpensesWithItems(
+        expenses: List<ExpenseEntity>,
+        bundles: List<Pair<ExpenseEntity, List<LineItemEntity>>>
+    ) = withContext(Dispatchers.IO) {
+        expenseDao.deleteAllLineItems()
+        expenseDao.deleteAllExpenses()
+        for (e in expenses) {
+            val newId = expenseDao.insertExpense(e)
+            val items = bundles.firstOrNull { it.first === e || it.first.id == e.id }?.second ?: emptyList()
+            if (items.isNotEmpty()) {
+                val patched = items.map { it.copy(expenseId = newId) }
+                expenseDao.insertLineItems(patched)
+            }
+        }
+        // No notifyChanged() here — this is the *restore* path, callers
+        // don't want it to immediately push back the same data we just
+        // downloaded.
+    }
+
+    suspend fun replaceAllVendorCorrections(items: List<VendorCorrectionEntity>) = withContext(Dispatchers.IO) {
+        vendorCorrectionDao.deleteAll()
+        if (items.isNotEmpty()) vendorCorrectionDao.insertAll(items)
+        notifyChanged()
+    }
 
     fun search(
         from: LocalDate?, to: LocalDate?, vendor: String,
@@ -115,6 +214,7 @@ class ExpenseRepository(
 
     suspend fun delete(id: Long) = withContext(Dispatchers.IO) {
         expenseDao.delete(id)
+        notifyChanged()
     }
 
     suspend fun recordVendorCorrection(vendor: String, categoryName: String) =
@@ -170,9 +270,24 @@ class ExpenseRepository(
                     category = CategoryType.fromName(liCat?.name),
                     categoryConfidence = li.categoryConfidence
                 )
-            }
+            },
+            metadata = metadataDao?.forExpense(entity.expense.id)?.toMetadata()
         )
     }
+
+    private fun ExpenseMetadataEntity.toMetadata(): com.expenselens.domain.model.ExpenseMetadata =
+        com.expenselens.domain.model.ExpenseMetadata(
+            merchantPhone = merchantPhones
+                ?.split(',')
+                ?.map { it.trim() }
+                ?.filter { it.isNotBlank() }
+                ?: emptyList(),
+            merchantEmail = merchantEmail,
+            fssaiNumber = fssaiNumber,
+            visitTime = visitTime,
+            itemCount = itemCount,
+            source = source
+        )
 
     private fun majorCategoryName(expense: Expense): String {
         // If any line items exist, use the most common category. Otherwise, use the

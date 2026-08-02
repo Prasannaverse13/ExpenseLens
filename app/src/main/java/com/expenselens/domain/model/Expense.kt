@@ -20,5 +20,6 @@ data class Expense(
     val billFileUri: String? = null,
     val billMime: String? = null,
     val ocrText: String? = null,
-    val lineItems: List<LineItem> = emptyList()
+    val lineItems: List<LineItem> = emptyList(),
+    val metadata: ExpenseMetadata? = null
 )

@@ -13,7 +13,8 @@ data class ExtractionResult(
     val currency: String = "INR",
     val rawText: String = "",
     val lineItems: List<LineItem> = emptyList(),
-    val fieldConfidences: Map<String, Float> = emptyMap()
+    val fieldConfidences: Map<String, Float> = emptyMap(),
+    val metadata: ExpenseMetadata? = null
 ) {
     val overallConfidence: Float
         get() = if (fieldConfidences.isEmpty()) 0.5f

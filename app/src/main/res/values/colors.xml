@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FFEFE6</color>
+    <color name="ic_launcher_background">#1A4A3F</color>
+    <color name="expense_lens_splash_bg">#0E3B2E</color>
+    <color name="expense_lens_cream">#FAF3E7</color>
+    <color name="expense_lens_emerald">#1A4A3F</color>
 </resources>

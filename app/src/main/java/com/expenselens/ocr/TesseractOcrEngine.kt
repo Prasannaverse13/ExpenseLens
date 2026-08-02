@@ -2,7 +2,7 @@ package com.expenselens.ocr
 
 import android.content.Context
 import android.graphics.Bitmap
-import cz.adaptech.tesseract4android.TessBaseAPI
+import com.googlecode.tesseract.android.TessBaseAPI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 

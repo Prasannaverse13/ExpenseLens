@@ -4,6 +4,7 @@
 /.idea
 .DS_Store
 /build
+/app/build/
 /captures
 .externalNativeBuild
 .cxx
@@ -12,3 +13,16 @@ local.properties
 *.aab
 *.keystore
 *.jks
+
+# Expenzia/ExpenseLens website lives in its own repo (GitHub Pages).
+# Kept here for local development; the source-of-truth site is pushed
+# separately to Prasannaverse13/expenselens.github.io.
+/expenselens-website/
+
+# Python scratch / temp scripts used to reverse-engineer the Razorpay
+# SDK during the billing migration. Useless to anyone else.
+/parse_jar*.py
+
+# Any leftover handoff reports or temp output
+/downloads/
+

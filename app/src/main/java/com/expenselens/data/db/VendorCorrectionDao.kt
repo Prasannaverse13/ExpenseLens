@@ -17,8 +17,17 @@ interface VendorCorrectionDao {
     )
     suspend fun bestFor(key: String): VendorCorrectionEntity?
 
+    @Query("SELECT * FROM vendor_corrections")
+    suspend fun getAll(): List<VendorCorrectionEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(correction: VendorCorrectionEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(items: List<VendorCorrectionEntity>): List<Long>
+
+    @Query("DELETE FROM vendor_corrections")
+    suspend fun deleteAll()
 
     @Query(
         """

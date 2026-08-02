@@ -52,6 +52,18 @@ object DraftStore {
                 })
             }
             put("lineItems", arr)
+            result.metadata?.let { md ->
+                put("metadata", JSONObject().apply {
+                    val phones = JSONArray()
+                    md.merchantPhone.forEach { phones.put(it) }
+                    put("merchantPhones", phones)
+                    md.merchantEmail?.let { put("merchantEmail", it) } ?: put("merchantEmail", JSONObject.NULL)
+                    md.fssaiNumber?.let { put("fssaiNumber", it) } ?: put("fssaiNumber", JSONObject.NULL)
+                    md.visitTime?.let { put("visitTime", it) } ?: put("visitTime", JSONObject.NULL)
+                    if (md.itemCount != null) put("itemCount", md.itemCount) else put("itemCount", JSONObject.NULL)
+                    md.source?.let { put("source", it) } ?: put("source", JSONObject.NULL)
+                })
+            }
         }
         File(draftsDir(context), "$id.json").writeText(obj.toString())
         return id
@@ -86,7 +98,26 @@ object DraftStore {
             currency = obj.optString("currency", "INR"),
             rawText = obj.optString("rawText"),
             lineItems = lines,
-            fieldConfidences = confMap
+            fieldConfidences = confMap,
+            metadata = obj.optJSONObject("metadata")?.let { mo ->
+                val phones = mo.optJSONArray("merchantPhones")
+                val phoneList = if (phones != null) (0 until phones.length())
+                    .mapNotNull { phones.optString(it).ifBlank { null } }
+                else {
+                    // Backwards-compat: older drafts stored a single string.
+                    val single = mo.optString("merchantPhone")
+                    if (mo.isNull("merchantPhone") || single.isBlank()) emptyList()
+                    else listOf(single)
+                }
+                com.expenselens.domain.model.ExpenseMetadata(
+                    merchantPhone = phoneList,
+                    merchantEmail = if (mo.isNull("merchantEmail")) null else mo.optString("merchantEmail").ifBlank { null },
+                    fssaiNumber = if (mo.isNull("fssaiNumber")) null else mo.optString("fssaiNumber").ifBlank { null },
+                    visitTime = if (mo.isNull("visitTime")) null else mo.optString("visitTime").ifBlank { null },
+                    itemCount = if (mo.isNull("itemCount")) null else mo.optInt("itemCount").takeIf { it > 0 },
+                    source = if (mo.isNull("source")) null else mo.optString("source").ifBlank { null }
+                )
+            }
         )
     }
 

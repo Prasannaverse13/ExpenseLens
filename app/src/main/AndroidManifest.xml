@@ -4,8 +4,21 @@
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.INTERNET"
-        tools:node="remove" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <queries>
+        <!-- We open the Paddle hosted checkout in a Custom Tab. Whitelist
+             the two Paddle domains so Chrome knows we can resolve them. -->
+        <package android:name="com.android.chrome" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" android:host="buy.paddle.com" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" android:host="checkout.paddle.com" />
+        </intent>
+    </queries>
 
     <application
         android:name=".App"
@@ -22,10 +35,23 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|uiMode|density|fontScale|locale|layoutDirection"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.ExpenseLens">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Paddle checkout return. Paddle redirects to this URL after
+                 the user finishes (or cancels) the hosted checkout. The
+                 query params (status, paddle_subscription_id) are read
+                 in MainActivity.onNewIntent and onResume. -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="expenselens" android:host="premium-callback" />
             </intent-filter>
         </activity>
 

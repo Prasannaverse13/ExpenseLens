@@ -1,0 +1,21 @@
+## Template for `local.properties` — copy this file to `local.properties`
+## and fill in your own values. The real `local.properties` is gitignored
+## (see .gitignore) and must NEVER be committed — it contains API keys.
+
+## Required: path to your Android SDK
+sdk.dir=C\:\\Users\\YOUR_USERNAME\\AppData\\Local\\Android\\Sdk
+
+## Optional: OpenAI vision API (Smart Extraction in the app). Leave the
+## key blank to disable Smart Extraction — the on-device parser is the
+## always-on fallback.
+openai.api.key=
+openai.model=gpt-4o
+
+## Optional: Paddle Premium subscription. Both IDs are required for the
+## Subscribe button in Settings to light up. Find them in the Paddle
+## dashboard under Catalog → Products / Prices.
+paddle.product.id=
+paddle.price.id=
+paddle.checkout.url=https://buy.paddle.com/product
+paddle.price.usd=4.99
+paddle.portal.url=
