@@ -1,21 +1,26 @@
-## Template for `local.properties` — copy this file to `local.properties`
-## and fill in your own values. The real `local.properties` is gitignored
-## (see .gitignore) and must NEVER be committed — it contains API keys.
+## Local properties template — copy to local.properties and fill in.
+## local.properties is gitignored, so it never leaves your machine.
 
-## Required: path to your Android SDK
-sdk.dir=C\:\\Users\\YOUR_USERNAME\\AppData\\Local\\Android\\Sdk
+## Android SDK location. Windows example:
+# sdk.dir=C\:\\Users\\YOURNAME\\AppData\\Local\\Android\\Sdk
+# macOS / Linux:
+# sdk.dir=/Users/YOURNAME/Library/Android/sdk
 
-## Optional: OpenAI vision API (Smart Extraction in the app). Leave the
-## key blank to disable Smart Extraction — the on-device parser is the
-## always-on fallback.
-openai.api.key=
-openai.model=gpt-4o
+## OpenAI API key (for smart bill extraction). Optional — the on-device
+## parser is the always-on fallback.
+# openai.api.key=sk-proj-xxxxxxxxxxxx
+# openai.model=gpt-4o
 
-## Optional: Paddle Premium subscription. Both IDs are required for the
-## Subscribe button in Settings to light up. Find them in the Paddle
-## dashboard under Catalog → Products / Prices.
-paddle.product.id=
-paddle.price.id=
-paddle.checkout.url=https://buy.paddle.com/product
-paddle.price.usd=4.99
-paddle.portal.url=
+## Paddle Premium subscription.
+## The app opens `paddle.pricing.url` in a Chrome Custom Tab. That page
+## hosts the Paddle.js inline checkout; after a successful payment the
+## page fires expenselens://premium-callback?status=success and the app
+## unlocks Premium locally.
+##
+## Paddle Billing v2 does NOT support hosted checkout URLs for native
+## mobile apps. See PADDLE_SETUP.md for the full setup walkthrough.
+# paddle.product.id=pro_xxxxxxxxxxxxxxxxxxxxxx
+# paddle.price.id=pri_xxxxxxxxxxxxxxxxxxxxxx
+# paddle.pricing.url=https://prasannaverse13.github.io/pricing.html
+# paddle.price.usd=4.99
+# paddle.portal.url=

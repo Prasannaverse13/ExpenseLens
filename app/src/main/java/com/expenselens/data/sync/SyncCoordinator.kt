@@ -133,6 +133,11 @@ class SyncCoordinator @Inject constructor(
         // Best-effort: also drop the bill files in app-private storage.
         val billsDir = BillStorage.billsDir(context)
         billsDir.listFiles()?.forEach { it.delete() }
+        // Drop the local premium flag too — a new user on the same
+        // device shouldn't inherit the previous user's subscription.
+        // (Premium will be restored from the new user's Drive backup on
+        // the next sign-in via BackupManager.restoreFromDrive.)
+        prefs.setPremium(false)
     }
 
     companion object {

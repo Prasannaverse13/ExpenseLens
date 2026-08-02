@@ -79,7 +79,8 @@ import javax.inject.Inject
 class WelcomeViewModel @Inject constructor(
     private val auth: GoogleAuthManager,
     private val prefs: AppPreferences,
-    private val throttle: com.expenselens.data.auth.SignInThrottle
+    private val throttle: com.expenselens.data.auth.SignInThrottle,
+    private val syncCoordinator: com.expenselens.data.sync.SyncCoordinator
 ) : ViewModel() {
 
     sealed class State {
@@ -111,6 +112,20 @@ class WelcomeViewModel @Inject constructor(
                     prefs.setDriveConnected(true)
                     prefs.setDriveAccount(r.email)
                     prefs.setDriveAccountName(r.displayName)
+                    // Pull the new user's backup from Drive so they
+                    // see their own data (and their own Premium status)
+                    // instead of whatever was on this device before.
+                    // Run on IO; this is the same call MainActivity does
+                    // on cold start — we just need to repeat it after a
+                    // sign-in that doesn't restart the activity.
+                    try {
+                        syncCoordinator.pullOnStart()
+                    } catch (t: Throwable) {
+                        android.util.Log.w(
+                            "WelcomeViewModel",
+                            "pullOnStart failed: ${t.message}"
+                        )
+                    }
                     _state.value = State.Idle
                     onSuccess()
                 }
@@ -229,10 +244,7 @@ fun WelcomeScreen(
             Spacer(Modifier.height(12.dp))
 
             Text(
-                text = "Sign in with Google to store your bills and receipts " +
-                    "in your own Google Drive. Nothing leaves your account " +
-                    "— we never see your data, there's no cloud server, " +
-                    "and you can sign out any time.",
+                text = "Capture bills in seconds. Yours to keep.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth(),
@@ -312,9 +324,7 @@ fun WelcomeScreen(
 
             Spacer(Modifier.height(24.dp))
             Text(
-                text = "Your data lives in your own Google Drive (a hidden " +
-                    "app folder only ExpenseLens can see). No cloud server, " +
-                    "no analytics, no third-party access.",
+                text = "Private by design.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth(),

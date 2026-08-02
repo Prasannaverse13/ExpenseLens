@@ -129,9 +129,10 @@ object AppModule {
     fun provideBackupManager(
         @ApplicationContext context: Context,
         repo: ExpenseRepository,
-        drive: com.expenselens.data.drive.GoogleDriveManager
+        drive: com.expenselens.data.drive.GoogleDriveManager,
+        prefs: AppPreferences
     ): com.expenselens.data.backup.BackupManager =
-        com.expenselens.data.backup.BackupManager(context, repo, drive)
+        com.expenselens.data.backup.BackupManager(context, repo, drive, prefs)
 
     @Provides @Singleton
     fun provideSignInThrottle(

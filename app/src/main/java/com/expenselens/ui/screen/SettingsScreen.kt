@@ -79,7 +79,8 @@ class SettingsViewModel @Inject constructor(
     private val prefs: AppPreferences,
     private val authManager: com.expenselens.data.auth.GoogleAuthManager,
     private val backupManager: com.expenselens.data.backup.BackupManager,
-    private val paddle: com.expenselens.data.billing.PaddleManager
+    private val paddle: com.expenselens.data.billing.PaddleManager,
+    private val syncCoordinator: com.expenselens.data.sync.SyncCoordinator
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(UiState())
@@ -113,6 +114,22 @@ class SettingsViewModel @Inject constructor(
     fun setPremium(value: Boolean) = viewModelScope.launch {
         prefs.setPremium(value)
         _ui.value = _ui.value.copy(isPremium = value)
+    }
+
+    /**
+     * Safety-net for users who completed checkout but the deep link
+     * didn't fire (e.g. browser blocked `expenselens://`, or they
+     * closed the Custom Tab before the success page loaded). The user
+     * self-attests they've already paid; we trust the local flag.
+     * A future server-side webhook will replace this with a verified
+     * Paddle subscription lookup.
+     */
+    fun restorePremium() = viewModelScope.launch {
+        prefs.setPremium(true)
+        _ui.value = _ui.value.copy(
+            isPremium = true,
+            billingMessage = "Premium restored on this device."
+        )
     }
 
     fun isPaddleConfigured(): Boolean = paddle.isConfigured()
@@ -187,10 +204,20 @@ class SettingsViewModel @Inject constructor(
      * Disconnect = revoke Google access + clear local cached data +
      * route back to the sign-in screen. The user's data on their
      * Drive is untouched (they can sign back in with the same account
-     * and it'll still be there).
+     * and it'll still be there). The local cache wipe also drops the
+     * premium flag, so a new user on the same device doesn't inherit
+     * the previous user's subscription.
      */
     fun disconnect(onDone: () -> Unit) = viewModelScope.launch {
         authManager.signOut()
+        // Wipe the local cache (expenses, bill images, premium flag)
+        // BEFORE clearing the prefs so the new user can't accidentally
+        // see the previous user's data.
+        try {
+            syncCoordinator.clearLocalCache()
+        } catch (t: Throwable) {
+            android.util.Log.w("SettingsViewModel", "clearLocalCache failed: ${t.message}")
+        }
         prefs.setDriveConnected(false)
         prefs.setDriveAccount("")
         prefs.setDriveAccountName("")
@@ -325,12 +352,9 @@ fun SettingsScreen(
                                 // SyncCoordinator pushes to Drive
                                 // automatically a few seconds after every
                                 // save (5s debounce), and pulls the
-                                // latest backup on app start. The user
-                                // just sees the "Last synced" label.
+                                // latest backup on app start.
                                 Text(
-                                    "Your bills and receipts are stored in your " +
-                                        "Google Drive. They sync automatically — no " +
-                                        "need to tap anything.",
+                                    "Backed up to your Google Drive automatically.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -357,14 +381,10 @@ fun SettingsScreen(
                             )
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                "When enabled, the app will send the captured bill image " +
-                                    "(JPEG, downscaled to at most 1536px on the long edge) " +
-                                    "to OpenAI's vision model to recover details the on-device " +
-                                    "parser can't — merchant phone, FSSAI number, visit time, " +
-                                    "item count. The full image is sent, not a redacted " +
-                                    "snippet. Nothing else leaves your device. Free plan: " +
-                                    "10 calls per month, then the on-device parser takes over. " +
-                                    "Premium: unlimited.",
+                                "Sends the bill image to OpenAI's vision model for " +
+                                    "details the on-device parser can't read. The image " +
+                                    "is downscaled before sending. Nothing else leaves " +
+                                    "your device.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -391,7 +411,7 @@ fun SettingsScreen(
                             if (ui.smartEnabled) {
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    if (ui.isPremium) "Calls this month: ${ui.callsThisMonth} (Premium — unlimited)"
+                                    if (ui.isPremium) "Calls this month: ${ui.callsThisMonth} (Premium)"
                                     else "Calls this month: ${ui.callsThisMonth} / 10",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -443,10 +463,10 @@ fun SettingsScreen(
                             Text(
                                 if (ui.isPremium)
                                     "Unlimited AI-powered bill extraction. " +
-                                        "Renews monthly via Paddle. Tap below to manage."
+                                        "Renews monthly via Paddle."
                                 else
-                                    "Free plan: 10 AI calls per month, then the on-device " +
-                                        "parser takes over. Premium removes the cap.",
+                                    "10 AI calls per month on the free plan. " +
+                                        "Premium removes the cap.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -500,13 +520,20 @@ fun SettingsScreen(
                                         fontWeight = FontWeight.SemiBold
                                     )
                                 }
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    "Opens a secure page to complete payment. " +
+                                        "Your subscription is linked to your account.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                                 if (!vm.isPaddleConfigured()) {
                                     Spacer(Modifier.height(6.dp))
                                     Text(
                                         "Add paddle.product.id and paddle.price.id to " +
                                             "local.properties to enable subscription.",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.error
                                     )
                                 }
                             }
@@ -523,6 +550,41 @@ fun SettingsScreen(
 
                     // Disconnect button
                     item { Spacer(Modifier.height(8.dp)) }
+                    // "Restore Premium" — safety net for users who paid
+                    // but the local flag didn't flip (deep link missed
+                    // because the success page was slow, browser blocked
+                    // the deep link, etc.). Client-trusted; we don't
+                    // call Paddle's API to verify.
+                    if (!ui.isPremium) {
+                        item {
+                            ExpenseLensSecondaryCard {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                                        .clickable { vm.restorePremium() }
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Star,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Restore Premium",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                     item {
                         ExpenseLensSecondaryCard {
                             Row(
@@ -544,17 +606,10 @@ fun SettingsScreen(
                                 Spacer(Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Disconnect Google account",
+                                        text = "Sign out",
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.error,
                                         fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "Signs you out and clears cached data on " +
-                                            "this device. Your Drive data is untouched — " +
-                                            "sign back in with the same account any time.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
@@ -580,13 +635,11 @@ fun SettingsScreen(
     if (showDisconnectConfirm) {
         AlertDialog(
             onDismissRequest = { showDisconnectConfirm = false },
-            title = { Text("Disconnect Google account?") },
+            title = { Text("Sign out?") },
             text = {
                 Text(
-                    "You'll be signed out and the cached data on this device " +
-                        "will be cleared. The data in your Google Drive is " +
-                        "untouched — sign back in with the same account to " +
-                        "see it again."
+                    "Your data stays in your Google Drive. Sign back in " +
+                        "any time to see it again."
                 )
             },
             confirmButton = {
@@ -604,7 +657,7 @@ fun SettingsScreen(
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Text("Disconnect", color = MaterialTheme.colorScheme.error)
+                        Text("Sign out", color = MaterialTheme.colorScheme.error)
                     }
                 }
             },
@@ -620,13 +673,11 @@ fun SettingsScreen(
             title = { Text("Enable smart extraction?") },
             text = {
                 Text(
-                    "Smart extraction sends the captured bill image to OpenAI's " +
-                        "vision model to recover details the on-device parser can't " +
-                        "— merchant phone, FSSAI number, visit time, item count.\n\n" +
-                        "What is sent: the JPEG of the bill, downscaled to at most " +
-                        "1536px on the long edge. Nothing else leaves your device.\n\n" +
+                    "Sends the bill image to OpenAI's vision model for fields " +
+                        "the on-device parser can't read. The image is downscaled " +
+                        "before sending; nothing else leaves your device.\n\n" +
                         "Capped at 10 calls per month on the free plan. " +
-                        "Premium removes the cap. You can turn this off any time."
+                        "Premium removes the cap."
                 )
             },
             confirmButton = {

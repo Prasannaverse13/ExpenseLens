@@ -65,7 +65,13 @@ android {
     val openaiModel = (localProps.getProperty("openai.model") ?: "gpt-4o").trim()
     val paddleProductId = (localProps.getProperty("paddle.product.id") ?: "").trim()
     val paddlePriceId = (localProps.getProperty("paddle.price.id") ?: "").trim()
-    val paddleCheckoutUrl = (localProps.getProperty("paddle.checkout.url") ?: "https://buy.paddle.com/product").trim()
+    // Paddle Billing v2 doesn't support hosted checkouts for native mobile
+    // apps — the dashboard gates those to "app-to-web" and "non-mobile
+    // desktop" only. We open the marketing-site pricing page in a Custom
+    // Tab and the Paddle.js inline checkout handles the rest. Override
+    // here for staging / alt deployments.
+    val paddlePricingUrl = (localProps.getProperty("paddle.pricing.url")
+        ?: "https://prasannaverse13.github.io/pricing.html").trim()
     val paddlePriceUsd = (localProps.getProperty("paddle.price.usd") ?: "4.99").trim()
     val paddlePortalUrl = (localProps.getProperty("paddle.portal.url") ?: "").trim()
 
@@ -75,7 +81,7 @@ android {
         buildConfigField("String", "OPENAI_MODEL", "\"$openaiModel\"")
         buildConfigField("String", "PADDLE_PRODUCT_ID", "\"$paddleProductId\"")
         buildConfigField("String", "PADDLE_PRICE_ID", "\"$paddlePriceId\"")
-        buildConfigField("String", "PADDLE_CHECKOUT_URL", "\"$paddleCheckoutUrl\"")
+        buildConfigField("String", "PADDLE_PRICING_URL", "\"$paddlePricingUrl\"")
         buildConfigField("String", "PADDLE_PRICE_USD", "\"$paddlePriceUsd\"")
         buildConfigField("String", "PADDLE_PORTAL_URL", "\"$paddlePortalUrl\"")
     }

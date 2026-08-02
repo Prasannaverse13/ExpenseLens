@@ -16,30 +16,36 @@ import javax.inject.Singleton
 /**
  * Paddle Premium subscription.
  *
- * Paddle for Android doesn't ship an SDK the way Razorpay does — instead
- * you point the user at Paddle's hosted checkout URL in a Chrome Custom
- * Tab. When the user finishes (success or cancel), Paddle redirects to
- * a deep link you control. We use `expenselens://premium-callback` and
- * the Android system wakes our MainActivity with the URI; we read
- * `?status=...` and flip the local premium flag.
+ * Paddle Billing v2 (the new dashboard) does **not** support the
+ * `https://buy.paddle.com/product/{id}` hosted-checkout pattern for
+ * native mobile apps — the dashboard explicitly gates hosted checkouts
+ * to "app-to-web sales funnels" and "non-mobile desktop apps". Native
+ * Android apps have to run the Paddle.js inline checkout on an
+ * *approved domain* and have the user open that page in a Custom Tab.
  *
- * The checkout URL is built from [BuildConfig.PADDLE_CHECKOUT_URL] +
- * product id + price id. The full URL pattern is:
+ * Our approved domain is `prasannaverse13.github.io`, so the flow is:
  *
- *   https://buy.paddle.com/product/{product_id}?prices[]={price_id}
+ *   App  →  Custom Tab to https://prasannaverse13.github.io/pricing.html
+ *   User →  Taps "Subscribe" on the page. Paddle.js opens the inline
+ *           checkout overlay.
+ *   Paddle  →  After payment, redirects to /success.html (the default
+ *              payment link set in the dashboard).
+ *   success.html  →  Fires the deep link `expenselens://premium-callback?status=success`
+ *                    and shows a "Open ExpenseLens" button.
+ *   App  →  MainActivity receives the deep link, flips the local
+ *           `is_premium` flag, syncs to Drive (5s debounce), and the
+ *           Settings screen reflects the new state.
  *
- * Why not a Paddle SDK?
- *  - Paddle's SDK is JavaScript-targeted (web/react-native). On Android
- *    the recommended path is a Custom Tab + deep link.
- *  - No SDK = ~zero dependency surface and no manifest hacks.
- *  - The Custom Tab shares cookies with Chrome, so the user only has
- *    to enter their card once and Paddle auto-fills subsequent ones.
+ * The actual Paddle price id, product id, and client-side token live
+ * on the website (not in the app). The app only needs to know the
+ * pricing page URL and the deep link scheme.
  *
- * SECURITY: Like the previous Razorpay integration, this is *client-
- * trusted*. Anyone with the APK can flip the local premium flag by
- * hitting the deep link directly. For real money, a backend (Firebase
- * Cloud Functions, Cloudflare Worker, etc.) should receive Paddle's
- * `subscription.created` webhook and flip the flag from there.
+ * SECURITY: This is still *client-trusted*. Anyone with the APK can
+ * flip the local premium flag by hitting the deep link directly. For
+ * real money, a backend (Firebase Cloud Functions, Cloudflare Worker,
+ * etc.) should verify the Paddle `subscription.created` webhook and
+ * flip the flag from there. The Restore Premium button in Settings is
+ * the current safety net for users whose deep link missed.
  */
 @Singleton
 class PaddleManager @Inject constructor(
@@ -49,7 +55,10 @@ class PaddleManager @Inject constructor(
 
     /**
      * True when local.properties has the Paddle product + price IDs set
-     * and the Subscribe button should be enabled.
+     * and the Subscribe button should be enabled. The product/price IDs
+     * are still useful for the in-app "Restore Premium" audit trail
+     * (logged when premium flips), even though the actual checkout runs
+     * on the marketing site.
      */
     fun isConfigured(): Boolean =
         BuildConfig.PADDLE_PRODUCT_ID.isNotBlank() &&
@@ -63,47 +72,31 @@ class PaddleManager @Inject constructor(
         BuildConfig.PADDLE_PORTAL_URL.ifBlank { null }
 
     /**
-     * Build the full checkout URL. Two query params get added so we know
-     * who the purchase is for when the deep link comes back:
-     *  - `email` (if we know the user's Google account)
-     *  - `passthrough` = the user's email — Paddle forwards this back
-     *    on the success URL so we can cross-reference. We also just put
-     *    it in `email` for our own convenience.
+     * Where to send the user when they tap "Subscribe" in Settings. By
+     * default this is the marketing-site pricing page (which hosts the
+     * Paddle.js inline checkout). Override via `paddle.pricing.url` in
+     * local.properties for staging / alt deployments.
      */
-    fun buildCheckoutUrl(customerEmail: String): String {
-        val base = BuildConfig.PADDLE_CHECKOUT_URL
-            .ifBlank { "https://buy.paddle.com/product" }
-        val product = BuildConfig.PADDLE_PRODUCT_ID
-        val price = BuildConfig.PADDLE_PRICE_ID
-        val u = Uri.parse("$base/$product").buildUpon()
-            .appendQueryParameter("prices[]", price)
-            .appendQueryParameter("quantity", "1")
-            .appendQueryParameter("billing_cycle", "monthly")
-            .appendQueryParameter("redirect", SUCCESS_REDIRECT)
-            .appendQueryParameter("redirect[success]", SUCCESS_REDIRECT)
-            .appendQueryParameter("redirect[cancel]", CANCEL_REDIRECT)
-        if (customerEmail.isNotBlank()) {
-            u.appendQueryParameter("email", customerEmail)
-            u.appendQueryParameter("passthrough", customerEmail)
+    fun pricingPageUrl(): String =
+        BuildConfig.PADDLE_PRICING_URL.ifBlank {
+            "https://prasannaverse13.github.io/pricing.html"
         }
-        return u.build().toString()
-    }
 
     /**
-     * Open the Paddle hosted checkout in a Custom Tab. The result comes
-     * back via the deep link in AndroidManifest, which lands in
-     * MainActivity.onNewIntent / onResume. The Activity must still be
-     * alive when the user returns (use `launchMode="singleTop"` so the
-     * same instance is reused).
+     * Open the Paddle.js inline checkout in a Custom Tab. The user pays
+     * on the marketing site, the site redirects to /success.html, and
+     * the success page fires the `expenselens://premium-callback?status=success`
+     * deep link, which lands back in MainActivity and flips premium.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun openCheckout(activity: Activity, customerEmail: String) {
         if (!isConfigured()) {
             Log.w(TAG, "Paddle not configured (PADDLE_PRODUCT_ID or PADDLE_PRICE_ID missing)")
             onResult(PaymentResult.ConfigMissing)
             return
         }
-        val url = buildCheckoutUrl(customerEmail)
-        Log.i(TAG, "Opening Paddle checkout: $url")
+        val url = pricingPageUrl()
+        Log.i(TAG, "Opening Paddle pricing page: $url")
         try {
             val intent = CustomTabsIntent.Builder()
                 .setShowTitle(true)
@@ -111,7 +104,7 @@ class PaddleManager @Inject constructor(
                 .build()
             intent.launchUrl(activity, Uri.parse(url))
         } catch (t: Throwable) {
-            Log.e(TAG, "Failed to open Paddle checkout", t)
+            Log.e(TAG, "Failed to open Paddle pricing page", t)
             onResult(PaymentResult.Error(t.message ?: "Couldn't open checkout"))
         }
     }
@@ -134,10 +127,6 @@ class PaddleManager @Inject constructor(
             status.equals("success", ignoreCase = true) ||
                 status.equals("completed", ignoreCase = true) ||
                 status.equals("active", ignoreCase = true) -> {
-                // Flip the local premium flag. The subscription_id is
-                // available in `paddle_subscription_id`; we log it for
-                // the user's own reference (and any future server-side
-                // verification).
                 val subId = uri.getQueryParameter("paddle_subscription_id")
                     ?: uri.getQueryParameter("subscription_id")
                     ?: ""
@@ -146,21 +135,20 @@ class PaddleManager @Inject constructor(
                 onResult(PaymentResult.Success(subscriptionId = subId))
             }
             status.equals("cancelled", ignoreCase = true) ||
-                status.equals("canceled", ignoreCase = true) || // one L
+                status.equals("canceled", ignoreCase = true) ||
                 status.equals("cancel", ignoreCase = true) -> {
                 onResult(PaymentResult.Cancelled)
             }
             else -> {
-                // Unknown status — treat as error but don't unlock.
                 onResult(PaymentResult.Error("Unknown return status: $status"))
             }
         }
     }
 
     /**
-     * Optional: clear the local premium flag (used by the "Cancel"
-     * button in Settings — until the real customer portal is wired up,
-     * this just clears the local view).
+     * Clear the local premium flag (used by the "Cancel" button in
+     * Settings — until the real customer portal is wired up, this just
+     * clears the local view).
      */
     suspend fun clearPremium() {
         prefs.setPremium(false)
@@ -202,7 +190,7 @@ class PaddleManager @Inject constructor(
     companion object {
         private const val TAG = "PaddleManager"
 
-        /** Where Paddle should redirect on success. */
+        /** Deep link the success page fires back to the app. */
         const val SUCCESS_REDIRECT = "expenselens://premium-callback?status=success"
 
         /** Where Paddle should redirect on cancel. */

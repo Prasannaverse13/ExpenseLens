@@ -9,6 +9,7 @@ import com.expenselens.data.db.ExpenseMetadataEntity
 import com.expenselens.data.db.LineItemEntity
 import com.expenselens.data.db.VendorCorrectionEntity
 import com.expenselens.data.drive.GoogleDriveManager
+import com.expenselens.data.prefs.AppPreferences
 import com.expenselens.data.repo.ExpenseRepository
 import com.expenselens.data.storage.BillStorage
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +35,8 @@ import java.time.format.DateTimeFormatter
 class BackupManager(
     private val context: Context,
     private val repo: ExpenseRepository,
-    private val drive: GoogleDriveManager
+    private val drive: GoogleDriveManager,
+    private val prefs: AppPreferences
 ) {
 
     /** What the UI surfaces after a sync. */
@@ -125,6 +127,7 @@ class BackupManager(
             put("schemaVersion", SCHEMA_VERSION)
             put("appVersion", appVersion())
             put("exportedAt", Instant.now().toString())
+            put("isPremium", prefs.isPremium.first())
             put("expenseCount", expensesWithItems.size)
             put("categories", categoriesJson)
             put("vendorCorrections", correctionsJson)
@@ -174,6 +177,12 @@ class BackupManager(
         val bills = json.optJSONObject("bills") ?: JSONObject()
         val categories = json.optJSONArray("categories") ?: JSONArray()
         val corrections = json.optJSONArray("vendorCorrections") ?: JSONArray()
+
+        // Restore Premium status from the backup so the user's subscription
+        // follows them across devices and reinstalls (after re-signing-in
+        // with the same Google account).
+        val backupIsPremium = json.optBoolean("isPremium", false)
+        prefs.setPremium(backupIsPremium)
 
         try {
             // 1) categories — replace by name
@@ -270,6 +279,8 @@ class BackupManager(
 
     companion object {
         private const val TAG = "BackupManager"
-        private const val SCHEMA_VERSION = 1
+        // v1: initial schema
+        // v2: added `isPremium` field (optional, defaults to false)
+        private const val SCHEMA_VERSION = 2
     }
 }
