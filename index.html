@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ExpenseLens — AI-powered expense tracking for small business owners</title>
+  <meta name="description" content="ExpenseLens captures bills via your phone camera, extracts line items using AI, and stores everything in your own Google Drive." />
+  <style>
+    :root {
+      --sage: #1a4a3f;
+      --sage-light: #2d6e5e;
+      --cream: #f5f0e6;
+      --text: #1f1f1f;
+      --muted: #5c5c5c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--cream);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .container { max-width: 760px; margin: 0 auto; padding: 48px 24px; }
+    h1 { color: var(--sage); font-size: 36px; margin: 0 0 12px; }
+    h2 { color: var(--sage); margin-top: 40px; }
+    .tagline { color: var(--muted); font-size: 18px; margin: 0 0 32px; }
+    .cta {
+      display: inline-block;
+      background: var(--sage);
+      color: white;
+      padding: 14px 28px;
+      border-radius: 12px;
+      text-decoration: none;
+      font-weight: 600;
+      margin: 8px 8px 8px 0;
+    }
+    .cta:hover { background: var(--sage-light); }
+    .price {
+      background: white;
+      border: 2px solid var(--sage);
+      border-radius: 16px;
+      padding: 24px;
+      margin: 32px 0;
+    }
+    .price .amount { font-size: 32px; font-weight: 700; color: var(--sage); }
+    .price .note { color: var(--muted); font-size: 14px; }
+    ul { padding-left: 24px; }
+    li { margin-bottom: 8px; }
+    footer {
+      border-top: 1px solid #d8d2c2;
+      margin-top: 64px;
+      padding-top: 24px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    footer a { color: var(--sage); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>ExpenseLens</h1>
+    <p class="tagline">AI-powered expense tracking for small business owners. Capture bills, extract line items, store everything in your own Google Drive.</p>
+
+    <a class="cta" href="#pricing">Get Premium — $4.99/month</a>
+    <a class="cta" href="#download" style="background: transparent; color: var(--sage); border: 2px solid var(--sage);">Download app</a>
+
+    <h2>What it does</h2>
+    <ul>
+      <li><strong>Snap a bill</strong> — your phone camera does the work, no typing.</li>
+      <li><strong>AI line-item extraction</strong> — on-device OCR plus an optional cloud model for tricky receipts.</li>
+      <li><strong>Automatic categorisation</strong> — Food cost, packaging, electricity, rent, salary, maintenance, and more.</li>
+      <li><strong>Your data, your Drive</strong> — every bill and receipt syncs to your own Google Drive. No servers on our side, no surveillance.</li>
+      <li><strong>Reports</strong> — daily / category / vendor breakdowns in a tap.</li>
+      <li><strong>Export</strong> — CSV / Excel / PDF for your accountant.</li>
+    </ul>
+
+    <h2 id="pricing">Pricing</h2>
+    <div class="price">
+      <div class="amount">$4.99 / month</div>
+      <p>Premium — unlimited AI-powered bill extraction. Cancel anytime.</p>
+      <p class="note">India: ₹299 / month. Local pricing applied automatically based on your country.</p>
+    </div>
+
+    <p>Free tier: 10 AI extractions per month, then the on-device parser takes over.</p>
+
+    <h2 id="download">Download</h2>
+    <p>ExpenseLens is currently in private beta. Sign up for the waitlist or contact us at <a href="mailto:hello@expenselens.app">hello@expenselens.app</a> to get the APK.</p>
+
+    <h2>Why your own Drive?</h2>
+    <p>Most expense apps store your financial data on their servers — that means you're trusting them not to leak it, get breached, or sell it. ExpenseLens stores your data only in the Google Drive you already control. Disconnect anytime and the local cache is wiped; sign back in and your data is there waiting.</p>
+
+    <footer>
+      <p>
+        <a href="/terms.html">Terms of Service</a> ·
+        <a href="/privacy.html">Privacy Policy</a> ·
+        <a href="/refund.html">Refund Policy</a>
+      </p>
+      <p>© 2026 ExpenseLens. Operated by Prasanna Ram.</p>
+    </footer>
+  </div>
+</body>
+</html>

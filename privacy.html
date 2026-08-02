@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — ExpenseLens</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 760px; margin: 0 auto; padding: 48px 24px; line-height: 1.6; color: #1f1f1f; background: #f5f0e6; }
+    h1 { color: #1a4a3f; }
+    h2 { color: #1a4a3f; margin-top: 32px; }
+    a { color: #1a4a3f; }
+    footer { border-top: 1px solid #d8d2c2; margin-top: 48px; padding-top: 16px; font-size: 14px; color: #5c5c5c; }
+  </style>
+</head>
+<body>
+  <h1>Privacy Policy</h1>
+  <p><em>Last updated: August 2026</em></p>
+
+  <h2>What we collect</h2>
+  <p><strong>Almost nothing.</strong> ExpenseLens is designed so that your financial data never lives on our servers.</p>
+
+  <ul>
+    <li><strong>Bills and receipts</strong> — stored only in your own Google Drive (the "appDataFolder", a private area only this app can see).</li>
+    <li><strong>Google account email and display name</strong> — used to label your Drive folder and prefill the payment form. We never email you or share the address with anyone.</li>
+    <li><strong>OAuth tokens</strong> — stored in encrypted local preferences on your device (AES-256, KeyStore-backed). We have no copy.</li>
+  </ul>
+
+  <h2>When you use Smart Extraction (optional)</h2>
+  <p>If you opt in, the captured bill image (JPEG, downscaled to at most 1536px on the long edge) is sent to OpenAI's vision API to extract extra fields (merchant phone, FSSAI number, visit time, item count). The full image is sent, not a redacted snippet. OpenAI's API is the only third party that ever sees your bill image, and only when Smart Extraction is enabled. Free tier is capped at 10 calls per month; Premium is uncapped.</p>
+
+  <h2>What we never collect</h2>
+  <ul>
+    <li>Your bills (we don't have a server-side copy).</li>
+    <li>Your bank or card details (Paddle handles payment — see <a href="https://www.paddle.com/legal/privacy">Paddle's privacy policy</a>).</li>
+    <li>Device identifiers, advertising IDs, or any tracking pixels.</li>
+    <li>Analytics, crash reports, or telemetry. If the app crashes, the crash is silent — we have no way to see it.</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>ExpenseLens is not directed at children under 13. We do not knowingly collect any data from children.</p>
+
+  <h2>Your rights</h2>
+  <p>You can:</p>
+  <ul>
+    <li><strong>Export</strong> all your data from the app at any time (CSV / Excel / PDF).</li>
+    <li><strong>Delete</strong> the local cache by tapping "Disconnect Google account" in Settings. Your data in Google Drive is untouched — you own it.</li>
+    <li><strong>Delete your Google account's app data</strong> by going to <a href="https://myaccount.google.com/permissions">Google Account → Third-party apps → ExpenseLens → Delete data</a>.</li>
+  </ul>
+
+  <h2>Changes to this policy</h2>
+  <p>If we ever change what we collect (we don't plan to), we'll update this page and the "Last updated" date. Major changes will be announced in the app.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about privacy: <a href="mailto:hello@expenselens.app">hello@expenselens.app</a></p>
+
+  <footer>
+    <a href="/index.html">← Back to ExpenseLens</a> ·
+    <a href="/terms.html">Terms of Service</a> ·
+    <a href="/refund.html">Refund Policy</a>
+  </footer>
+</body>
+</html>
