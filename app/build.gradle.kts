@@ -74,6 +74,12 @@ android {
         ?: "https://prasannaverse13.github.io/pricing.html").trim()
     val paddlePriceUsd = (localProps.getProperty("paddle.price.usd") ?: "4.99").trim()
     val paddlePortalUrl = (localProps.getProperty("paddle.portal.url") ?: "").trim()
+    // Optional server-side Paddle Billing v2 API key (pdl_…). When
+    // set, the Settings screen offers a "Verify with Paddle" action
+    // that confirms an active subscription against Paddle's servers
+    // and flips is_premium — useful when the deep-link return from
+    // success.html was blocked or missed.
+    val paddleApiKey = (localProps.getProperty("paddle.api.key") ?: "").trim()
 
     defaultConfig {
         // (block above already set applicationId etc.; we add buildConfigField here)
@@ -84,6 +90,7 @@ android {
         buildConfigField("String", "PADDLE_PRICING_URL", "\"$paddlePricingUrl\"")
         buildConfigField("String", "PADDLE_PRICE_USD", "\"$paddlePriceUsd\"")
         buildConfigField("String", "PADDLE_PORTAL_URL", "\"$paddlePortalUrl\"")
+        buildConfigField("String", "PADDLE_API_KEY", "\"$paddleApiKey\"")
     }
 
     packaging {

@@ -80,6 +80,7 @@ class SettingsViewModel @Inject constructor(
     private val authManager: com.expenselens.data.auth.GoogleAuthManager,
     private val backupManager: com.expenselens.data.backup.BackupManager,
     private val paddle: com.expenselens.data.billing.PaddleManager,
+    private val paddleApi: com.expenselens.data.billing.PaddleApiClient,
     private val syncCoordinator: com.expenselens.data.sync.SyncCoordinator
 ) : ViewModel() {
 
@@ -131,6 +132,65 @@ class SettingsViewModel @Inject constructor(
             billingMessage = "Premium restored on this device."
         )
     }
+
+    /**
+     * Server-verified restore. Calls Paddle's REST API with the
+     * signed-in user's email and unlocks Premium if there's an
+     * active or trialing subscription. Requires `paddle.api.key` in
+     * local.properties (a v2 server-side API key, not the same as
+     * the client-side token on the marketing site). Disabled in the
+     * UI when no key is configured.
+     */
+    fun verifyWithPaddle() = viewModelScope.launch {
+        if (!paddleApi.isConfigured()) {
+            _ui.value = _ui.value.copy(
+                billingMessage = "Verification is not configured. Add paddle.api.key to local.properties."
+            )
+            return@launch
+        }
+        val email = _ui.value.accountEmail
+        if (email.isBlank()) {
+            _ui.value = _ui.value.copy(
+                billingMessage = "Sign in with Google first — Paddle verification needs your account email."
+            )
+            return@launch
+        }
+        _ui.value = _ui.value.copy(billingMessage = "Checking Paddle…")
+        when (val r = paddleApi.verifyActiveSubscription(email)) {
+            is com.expenselens.data.billing.PaddleApiClient.VerifyResult.Active -> {
+                prefs.setPremium(true)
+                val renews = r.nextBilledAt?.let { " — renews $it" } ?: ""
+                _ui.value = _ui.value.copy(
+                    isPremium = true,
+                    billingMessage = "Paddle confirmed your subscription$renews.",
+                    subscriptionId = r.subscriptionId
+                )
+            }
+            is com.expenselens.data.billing.PaddleApiClient.VerifyResult.NoActiveSubscription -> {
+                _ui.value = _ui.value.copy(
+                    billingMessage = "No active subscription found for $email on Paddle."
+                )
+            }
+            is com.expenselens.data.billing.PaddleApiClient.VerifyResult.NotConfigured -> {
+                _ui.value = _ui.value.copy(
+                    billingMessage = "Verification is not configured. Add paddle.api.key to local.properties."
+                )
+            }
+            is com.expenselens.data.billing.PaddleApiClient.VerifyResult.ApiError -> {
+                _ui.value = _ui.value.copy(
+                    billingMessage = "Paddle said no (HTTP ${r.status}). " +
+                        "Check the API key in local.properties."
+                )
+            }
+            is com.expenselens.data.billing.PaddleApiClient.VerifyResult.NetworkError -> {
+                _ui.value = _ui.value.copy(
+                    billingMessage = "Couldn't reach Paddle: ${r.message}"
+                )
+            }
+        }
+    }
+
+    fun isPaddleVerifyConfigured(): Boolean = paddleApi.isConfigured()
 
     fun isPaddleConfigured(): Boolean = paddle.isConfigured()
     fun paddlePriceUsd(): String = paddle.priceLabel()
@@ -240,7 +300,8 @@ class SettingsViewModel @Inject constructor(
         val driveBusy: Boolean = false,
         val driveError: String? = null,
         val isPremium: Boolean = false,
-        val billingMessage: String? = null
+        val billingMessage: String? = null,
+        val subscriptionId: String? = null
     )
 }
 
@@ -472,6 +533,14 @@ fun SettingsScreen(
                             )
                             Spacer(Modifier.height(12.dp))
                             if (ui.isPremium) {
+                                ui.subscriptionId?.let { subId ->
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        text = "Subscription: $subId",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     val ctx = androidx.compose.ui.platform.LocalContext.current
                                     OutlinedButton(
@@ -558,28 +627,45 @@ fun SettingsScreen(
                     if (!ui.isPremium) {
                         item {
                             ExpenseLensSecondaryCard {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-                                        .clickable { vm.restorePremium() }
-                                        .padding(vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Star,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "Restore Premium",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            fontWeight = FontWeight.SemiBold
+                                Column {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                                            .clickable { vm.restorePremium() }
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Star,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(22.dp)
                                         )
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Restore Premium",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                text = "Already paid? Tap to re-enable on this device.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    if (vm.isPaddleVerifyConfigured()) {
+                                        Spacer(Modifier.height(8.dp))
+                                        OutlinedButton(
+                                            onClick = { vm.verifyWithPaddle() },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+                                        ) {
+                                            Text("Verify with Paddle")
+                                        }
                                     }
                                 }
                             }
