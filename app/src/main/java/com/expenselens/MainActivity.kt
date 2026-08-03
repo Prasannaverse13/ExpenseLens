@@ -48,12 +48,15 @@ class MainActivity : ComponentActivity() {
             throw t
         }
 
-        // Start the Drive auto-sync coordinator. Idempotent — safe to
-        // call again on activity recreation. Subscribes to repo changes
-        // and pushes to Drive after a 5s debounce.
+        // Start the Supabase auto-sync coordinator. Idempotent — safe
+        // to call again on activity recreation. Subscribes to repo
+        // changes and pushes to Supabase after a 5s debounce.
         syncCoordinator.start()
-        // Try to pull the latest backup from Drive on launch. No-op if
-        // not signed in or if Drive is empty.
+        // One-time Drive → Supabase migration. Idempotent — no-op after
+        // the first successful run.
+        activityScope.launch { syncCoordinator.runMigrationIfNeeded() }
+        // Try to pull the latest data from Supabase on launch. No-op if
+        // not signed in to Supabase.
         activityScope.launch { syncCoordinator.pullOnStart() }
 
         // If we were cold-launched by the Paddle deep link, route the

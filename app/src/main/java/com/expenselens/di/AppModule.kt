@@ -107,17 +107,28 @@ object AppModule {
     @Provides @Singleton
     fun provideExportService(): ExportService = ExportService()
 
-    // ── Google Drive backup plumbing ──────────────────────────────────────
+    // ── Google Drive backup plumbing (kept read-only for the one-time
+    //     Drive → Supabase migration; auto-push is disabled) ────────
     @Provides @Singleton
     fun provideTokenStore(@ApplicationContext context: Context): com.expenselens.data.auth.TokenStore =
         com.expenselens.data.auth.TokenStore(context)
 
     @Provides @Singleton
+    fun provideSupabaseAuthStore(
+        @ApplicationContext context: Context
+    ): com.expenselens.data.auth.SupabaseAuthStore =
+        com.expenselens.data.auth.SupabaseAuthStore(context)
+
+    @Provides @Singleton
     fun provideGoogleAuthManager(
         @ApplicationContext context: Context,
-        tokenStore: com.expenselens.data.auth.TokenStore
+        tokenStore: com.expenselens.data.auth.TokenStore,
+        supabaseAuth: com.expenselens.data.auth.SupabaseAuthStore,
+        supabase: com.expenselens.data.supabase.SupabaseClientProvider
     ): com.expenselens.data.auth.GoogleAuthManager =
-        com.expenselens.data.auth.GoogleAuthManager(context, tokenStore)
+        com.expenselens.data.auth.GoogleAuthManager(
+            context, tokenStore, supabaseAuth, supabase
+        )
 
     @Provides @Singleton
     fun provideGoogleDriveManager(
@@ -133,6 +144,21 @@ object AppModule {
         prefs: AppPreferences
     ): com.expenselens.data.backup.BackupManager =
         com.expenselens.data.backup.BackupManager(context, repo, drive, prefs)
+
+    // ── Supabase data layer (replaces Drive for daily sync) ──────────
+    @Provides @Singleton
+    fun provideSupabaseClient(): com.expenselens.data.supabase.SupabaseClientProvider =
+        com.expenselens.data.supabase.SupabaseClientProvider()
+
+    @Provides @Singleton
+    fun provideSupabaseSync(
+        @ApplicationContext context: Context,
+        client: com.expenselens.data.supabase.SupabaseClientProvider,
+        auth: com.expenselens.data.auth.SupabaseAuthStore,
+        repo: ExpenseRepository,
+        prefs: AppPreferences
+    ): com.expenselens.data.supabase.SupabaseSync =
+        com.expenselens.data.supabase.SupabaseSync(context, client, auth, repo, prefs)
 
     @Provides @Singleton
     fun provideSignInThrottle(

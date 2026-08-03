@@ -24,3 +24,19 @@
 # paddle.pricing.url=https://prasannaverse13.github.io/pricing.html
 # paddle.price.usd=4.99
 # paddle.portal.url=
+
+## Optional: Paddle Billing v2 SERVER-SIDE API key (pdl_…). Generate
+## at https://vendors.paddle.com/authentication-v2 → API keys tab.
+## When set, Settings offers a "Verify with Paddle" action that
+## confirms an active subscription against Paddle's servers — useful
+## when the success-page deep link was blocked or missed.
+# paddle.api.key=pdl_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+## Supabase — primary data store (replaces Google Drive as of v1.1).
+## URL: Supabase dashboard → Project Settings → API
+## anon key: same page → Project API keys → anon public (JWT starting with eyJ...)
+## The anon key is safe to ship in the APK — it's the public key
+## designed for client apps. RLS on every table enforces
+## user_id = auth.uid() isolation.
+# supabase.url=https://xxxxxxxxxxxx.supabase.co
+# supabase.anon.key=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.xxxxxxxxxxxxxxxxxxxx

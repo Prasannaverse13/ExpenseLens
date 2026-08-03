@@ -31,6 +31,14 @@ browser = "1.8.0"
 # Note: Paddle Premium uses a hosted checkout (no SDK).
 # See PADDLE_SETUP.md for product/price ID configuration.
 
+# Supabase — primary data store (replaces Google Drive as of v1.1).
+# Use the BOM so the individual modules (postgrest, storage, auth) align.
+# 2.x line is the last series that supports Kotlin 1.9.x (our project pins 1.9.24).
+supabaseBom = "2.6.0"
+supabase = "2.6.0"
+kotlinxSerialization = "1.6.3"
+ktor = "2.3.12"
+
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
@@ -68,6 +76,17 @@ androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", versi
 play-services-auth = { module = "com.google.android.gms:play-services-auth", version.ref = "playServicesAuth" }
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "securityCrypto" }
 androidx-browser = { module = "androidx.browser:browser", version.ref = "browser" }
+
+# Supabase Kotlin client
+supabase-bom = { module = "io.github.jan-tennert.supabase:bom", version.ref = "supabaseBom" }
+supabase-postgrest = { module = "io.github.jan-tennert.supabase:postgrest-kt", version.ref = "supabase" }
+supabase-storage = { module = "io.github.jan-tennert.supabase:storage-kt", version.ref = "supabase" }
+# Note: supabase-kt 2.x calls the auth module "gotrue-kt" (not "auth-kt"
+# — that name only exists in 3.x). It provides the same signIn / signOut
+# / currentUser APIs.
+supabase-auth = { module = "io.github.jan-tennert.supabase:gotrue-kt", version.ref = "supabase" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+ktor-client-android = { module = "io.ktor:ktor-client-android", version.ref = "ktor" }
 junit = { module = "junit:junit", version.ref = "junit" }
 androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidxJunit" }
 androidx-test-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }

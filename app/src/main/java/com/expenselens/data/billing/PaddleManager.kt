@@ -7,8 +7,16 @@ import android.net.Uri
 import android.util.Log
 import androidx.browser.customtabs.CustomTabsIntent
 import com.expenselens.BuildConfig
+import com.expenselens.data.auth.SupabaseAuthStore
 import com.expenselens.data.prefs.AppPreferences
+import com.expenselens.data.supabase.PremiumRow
+import com.expenselens.data.supabase.SupabaseClientProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.jan.supabase.postgrest.postgrest
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -50,8 +58,12 @@ import javax.inject.Singleton
 @Singleton
 class PaddleManager @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val prefs: AppPreferences
+    private val prefs: AppPreferences,
+    private val supabase: SupabaseClientProvider,
+    private val supabaseAuth: SupabaseAuthStore
 ) {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * True when local.properties has the Paddle product + price IDs set
@@ -132,6 +144,14 @@ class PaddleManager @Inject constructor(
                     ?: ""
                 Log.i(TAG, "Paddle success: subscription=$subId")
                 runBlocking { prefs.setPremium(true) }
+                // Mirror to the Supabase `premium` table (best-effort, fire-and-forget).
+                if (supabase.isConfigured() && supabaseAuth.isSignedIn()) {
+                    val userId = supabaseAuth.userId().orEmpty()
+                    val subIdFinal = subId
+                    scope.launch {
+                        writePremiumRow(userId, subIdFinal, isPremium = true)
+                    }
+                }
                 onResult(PaymentResult.Success(subscriptionId = subId))
             }
             status.equals("cancelled", ignoreCase = true) ||
@@ -152,6 +172,32 @@ class PaddleManager @Inject constructor(
      */
     suspend fun clearPremium() {
         prefs.setPremium(false)
+        if (supabase.isConfigured() && supabaseAuth.isSignedIn()) {
+            val userId = supabaseAuth.userId().orEmpty()
+            scope.launch { writePremiumRow(userId, "", isPremium = false) }
+        }
+    }
+
+    /**
+     * Mirror the current premium state into the Supabase `premium`
+     * table. Best-effort: failure is logged but never thrown (the local
+     * prefs are the source of truth for the UI).
+     */
+    private suspend fun writePremiumRow(userId: String, subscriptionId: String, isPremium: Boolean) {
+        try {
+            val sb = supabase.client ?: return
+            sb.postgrest.from("premium").upsert(
+                PremiumRow(
+                    userId = userId,
+                    isPremium = isPremium,
+                    paddleSubscriptionId = subscriptionId.ifBlank { null },
+                    updatedAt = java.time.Instant.now().toString()
+                )
+            )
+            Log.i(TAG, "Supabase premium row written: $isPremium (sub=$subscriptionId)")
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to write Supabase premium row: ${t.message}")
+        }
     }
 
     /** The current list of in-app billing results. */

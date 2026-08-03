@@ -3,10 +3,11 @@ package com.expenselens.data.sync
 import android.content.Context
 import android.util.Log
 import com.expenselens.data.auth.GoogleAuthManager
-import com.expenselens.data.backup.BackupManager
 import com.expenselens.data.prefs.AppPreferences
 import com.expenselens.data.repo.ExpenseRepository
 import com.expenselens.data.storage.BillStorage
+import com.expenselens.data.supabase.MigrationManager
+import com.expenselens.data.supabase.SupabaseSync
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,22 +23,24 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Owns the "Drive is the storage, not a backup" model.
+ * Owns the "Supabase is the storage, Drive is one-time migration" model.
  *
  *  - [start] is called once at app launch (from [com.expenselens.MainActivity]).
  *    It subscribes to [ExpenseRepository.dataChanges], debounces bursts of
- *    saves (so capturing three bills in a row only triggers one Drive
- *    upload), and pushes the local DB to the user's Drive.
+ *    saves (so capturing three bills in a row only triggers one Supabase
+ *    upload), and pushes the local DB to Supabase.
  *  - [pullOnStart] runs once at app launch too: if the user is signed in
- *    with Google, download their latest backup and replace the local
+ *    with Supabase, download their latest data and replace the local
  *    cache with it. This is what makes the app "follow the user" across
  *    devices.
+ *  - [runMigrationIfNeeded] runs once at app launch too: one-time
+ *    Drive → Supabase import for users coming from the v1.0 era.
  *  - [state] exposes the current sync status to the UI (e.g. the
  *    "Last synced" label in the Profile screen).
  *
- * The local Room DB is always the live working copy. The Drive file is
- * the durable mirror. The user never has to tap "Sync" — it just
- * happens a few seconds after the last save.
+ * The local Room DB is always the live working copy. Supabase is the
+ * durable mirror. The user never has to tap "Sync" — it just happens
+ * a few seconds after the last save.
  */
 @OptIn(FlowPreview::class)
 @Singleton
@@ -46,7 +49,8 @@ class SyncCoordinator @Inject constructor(
     private val auth: GoogleAuthManager,
     private val prefs: AppPreferences,
     private val repo: ExpenseRepository,
-    private val backup: BackupManager
+    private val sync: SupabaseSync,
+    private val migration: MigrationManager
 ) {
 
     sealed class State {
@@ -72,52 +76,81 @@ class SyncCoordinator @Inject constructor(
                 .debounce(5_000L) // 5s grace — burst saves collapse to one push
                 .distinctUntilChanged()
                 .collect {
-                    if (auth.isConnected()) pushToDrive(reason = "auto")
+                    if (auth.isSupabaseReady()) pushToSupabase(reason = "auto")
                 }
         }
     }
 
     /**
-     * Pull the user's latest backup from Drive into the local cache.
-     * Called from MainActivity onCreate after sign-in. Idempotent — if
-     * there's nothing on Drive yet, this is a no-op.
+     * Pull the user's latest data from Supabase into the local cache.
+     * Called from MainActivity onCreate after sign-in. Idempotent —
+     * if the user has no Supabase data yet, this is a no-op.
      */
     suspend fun pullOnStart() {
-        if (!auth.isConnected()) return
-        val result = backup.latestBackup()
-        if (result == null) {
-            Log.i(TAG, "No backup on Drive yet — local DB is authoritative for now")
-            return
-        }
-        _state.value = State.Syncing("pulling from Drive")
-        when (val r = backup.restoreFromDrive(result.id)) {
-            is BackupManager.SyncResult.Success -> {
-                prefs.setDriveLastSync(System.currentTimeMillis(), result.id)
+        if (!auth.isSupabaseReady()) return
+        _state.value = State.Syncing("pulling from Supabase")
+        when (val r = sync.pullOnStart()) {
+            is SupabaseSync.SyncResult.Success -> {
+                prefs.setSupabaseLastSync(System.currentTimeMillis())
                 _state.value = State.Ok(System.currentTimeMillis())
             }
-            is BackupManager.SyncResult.Failure -> {
+            is SupabaseSync.SyncResult.Failure -> {
                 _state.value = State.Error(r.reason)
             }
+            SupabaseSync.SyncResult.NotConfigured,
+            SupabaseSync.SyncResult.NotSignedIn -> {
+                Log.i(TAG, "Pull skipped: Supabase not ready")
+                _state.value = State.Idle
+            }
+        }
+    }
+
+    /**
+     * One-time Drive → Supabase migration. Runs the first time after the
+     * v1.1 upgrade. Idempotent — no-op after the first run.
+     */
+    suspend fun runMigrationIfNeeded() {
+        try {
+            when (val r = migration.migrateIfNeeded()) {
+                MigrationManager.MigrationOutcome.AlreadyMigrated -> Unit
+                MigrationManager.MigrationOutcome.NotSignedIn,
+                MigrationManager.MigrationOutcome.SupabaseNotConfigured -> {
+                    Log.i(TAG, "Migration skipped: ${r::class.simpleName}")
+                }
+                is MigrationManager.MigrationOutcome.Done -> {
+                    Log.i(TAG, "Migration done: ${r.rowsWritten} rows")
+                }
+                is MigrationManager.MigrationOutcome.PushFailed -> {
+                    Log.w(TAG, "Migration push failed (will retry): ${r.reason}")
+                }
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Migration threw", t)
         }
     }
 
     /** Manual push (e.g. user taps "Sync now" in Settings). */
     suspend fun pushNow(): Result<Unit> {
-        return if (auth.isConnected()) pushToDrive(reason = "manual")
-        else Result.failure(IllegalStateException("Not signed in to Google"))
+        return if (auth.isSupabaseReady()) pushToSupabase(reason = "manual")
+        else Result.failure(IllegalStateException("Not signed in to Supabase"))
     }
 
-    private suspend fun pushToDrive(reason: String): Result<Unit> {
+    private suspend fun pushToSupabase(reason: String): Result<Unit> {
         _state.value = State.Syncing(reason)
-        return when (val r = backup.syncNow()) {
-            is BackupManager.SyncResult.Success -> {
-                prefs.setDriveLastSync(System.currentTimeMillis(), r.driveFileId)
+        return when (val r = sync.pushNow()) {
+            is SupabaseSync.SyncResult.Success -> {
+                prefs.setSupabaseLastSync(System.currentTimeMillis())
                 _state.value = State.Ok(System.currentTimeMillis())
                 Result.success(Unit)
             }
-            is BackupManager.SyncResult.Failure -> {
+            is SupabaseSync.SyncResult.Failure -> {
                 _state.value = State.Error(r.reason)
                 Result.failure(IllegalStateException(r.reason))
+            }
+            SupabaseSync.SyncResult.NotConfigured,
+            SupabaseSync.SyncResult.NotSignedIn -> {
+                _state.value = State.Idle
+                Result.failure(IllegalStateException("Supabase not ready"))
             }
         }
     }
@@ -125,18 +158,11 @@ class SyncCoordinator @Inject constructor(
     /** Called on disconnect — wipe the local cache. */
     suspend fun clearLocalCache() {
         // Delete every expense + every line item + every receipt image.
-        // The user signed out of Google so their Drive is no longer
-        // "their" Drive from this device's perspective; we shouldn't
-        // hold a stale copy. Re-seeding categories happens automatically
-        // the next time the dashboard opens.
+        // The user signed out of Google so we shouldn't hold a stale copy.
+        // Re-seeding categories happens automatically next dashboard open.
         repo.replaceAllExpensesWithItems(emptyList(), emptyList())
-        // Best-effort: also drop the bill files in app-private storage.
         val billsDir = BillStorage.billsDir(context)
         billsDir.listFiles()?.forEach { it.delete() }
-        // Drop the local premium flag too — a new user on the same
-        // device shouldn't inherit the previous user's subscription.
-        // (Premium will be restored from the new user's Drive backup on
-        // the next sign-in via BackupManager.restoreFromDrive.)
         prefs.setPremium(false)
     }
 

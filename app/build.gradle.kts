@@ -81,6 +81,17 @@ android {
     // success.html was blocked or missed.
     val paddleApiKey = (localProps.getProperty("paddle.api.key") ?: "").trim()
 
+    // Supabase — primary data store as of v1.1. Replaces Google Drive.
+    // Both URL and anon key are public-by-design (the anon key is
+    // embedded in every Supabase client app; RLS is the security
+    // boundary, not the key secrecy).
+    val supabaseUrl = (localProps.getProperty("supabase.url") ?: "").trim()
+    val supabaseAnonKey = (localProps.getProperty("supabase.anon.key") ?: "").trim()
+    // Google Web OAuth Client ID — for the Supabase signInWithIdToken
+    // (Google) flow. Blank falls back to "no cloud sync" mode (local
+    // Room DB only, same as the pre-Supabase behaviour).
+    val googleWebClientId = (localProps.getProperty("google.web.client.id") ?: "").trim()
+
     defaultConfig {
         // (block above already set applicationId etc.; we add buildConfigField here)
         buildConfigField("String", "OPENAI_API_KEY", "\"$openaiKey\"")
@@ -91,6 +102,9 @@ android {
         buildConfigField("String", "PADDLE_PRICE_USD", "\"$paddlePriceUsd\"")
         buildConfigField("String", "PADDLE_PORTAL_URL", "\"$paddlePortalUrl\"")
         buildConfigField("String", "PADDLE_API_KEY", "\"$paddleApiKey\"")
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
     }
 
     packaging {
@@ -166,6 +180,15 @@ dependencies {
     // Paddle Premium subscription uses a hosted checkout (Chrome Custom Tab)
     // — no SDK needed. The deep link return is handled in MainActivity.
     implementation(libs.androidx.browser)
+
+    // Supabase — primary data store. BOM aligns module versions.
+    implementation(platform(libs.supabase.bom))
+    implementation(libs.supabase.postgrest)
+    implementation(libs.supabase.storage)
+    implementation(libs.supabase.auth)
+    // Ktor + serialization — transitive, but pinned to match supabase-kt 2.6.0.
+    implementation(libs.ktor.client.android)
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.junit)

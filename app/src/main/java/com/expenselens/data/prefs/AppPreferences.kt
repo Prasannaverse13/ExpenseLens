@@ -50,6 +50,12 @@ class AppPreferences(private val context: Context) {
     // validator.
     private val keyPremium = booleanPreferencesKey("is_premium")
 
+    // Supabase migration — set to true after the one-time Drive → Supabase
+    // import on first launch after the v1.1 upgrade. Once true, the app
+    // uses Supabase as the source of truth and Drive becomes a no-op.
+    private val keyMigratedToSupabase = booleanPreferencesKey("migrated_to_supabase")
+    private val keySupabaseLastSync = longPreferencesKey("supabase_last_sync") // epoch millis
+
     val currency: Flow<String> = context.dataStore.data.map { it[keyCurrency] ?: "INR" }
     val defaultPayment: Flow<PaymentMethod> =
         context.dataStore.data.map { PaymentMethod.fromName(it[keyPayment]) }
@@ -78,6 +84,9 @@ class AppPreferences(private val context: Context) {
      * integration is added, the receipt validator will flip this to true.
      */
     val isPremium: Flow<Boolean> = context.dataStore.data.map { it[keyPremium] ?: false }
+
+    val hasMigratedToSupabase: Flow<Boolean> = context.dataStore.data.map { it[keyMigratedToSupabase] ?: false }
+    val supabaseLastSync: Flow<Long> = context.dataStore.data.map { it[keySupabaseLastSync] ?: 0L }
 
     suspend fun snapshot(): Preferences = context.dataStore.data.first()
 
@@ -133,5 +142,13 @@ class AppPreferences(private val context: Context) {
 
     suspend fun setPremium(value: Boolean) = context.dataStore.edit {
         it[keyPremium] = value
+    }
+
+    suspend fun setMigratedToSupabase(value: Boolean) = context.dataStore.edit {
+        it[keyMigratedToSupabase] = value
+    }
+
+    suspend fun setSupabaseLastSync(epochMillis: Long) = context.dataStore.edit {
+        it[keySupabaseLastSync] = epochMillis
     }
 }

@@ -112,12 +112,18 @@ class WelcomeViewModel @Inject constructor(
                     prefs.setDriveConnected(true)
                     prefs.setDriveAccount(r.email)
                     prefs.setDriveAccountName(r.displayName)
-                    // Pull the new user's backup from Drive so they
-                    // see their own data (and their own Premium status)
-                    // instead of whatever was on this device before.
-                    // Run on IO; this is the same call MainActivity does
-                    // on cold start — we just need to repeat it after a
-                    // sign-in that doesn't restart the activity.
+                    // Run the one-time Drive → Supabase migration
+                    // (no-op if already done). Then pull the new user's
+                    // latest data from Supabase so they see their own
+                    // data instead of whatever was on this device before.
+                    try {
+                        syncCoordinator.runMigrationIfNeeded()
+                    } catch (t: Throwable) {
+                        android.util.Log.w(
+                            "WelcomeViewModel",
+                            "migration failed: ${t.message}"
+                        )
+                    }
                     try {
                         syncCoordinator.pullOnStart()
                     } catch (t: Throwable) {
