@@ -40,3 +40,16 @@
 ## user_id = auth.uid() isolation.
 # supabase.url=https://xxxxxxxxxxxx.supabase.co
 # supabase.anon.key=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.xxxxxxxxxxxxxxxxxxxx
+
+## Google OAuth Client ID — needed for Google Sign-In + Supabase exchange.
+## Create one in Google Cloud Console → APIs & Services → Credentials
+## → Create Credentials → OAuth client ID. Type: "Android" (or "Web
+## application" — both work for requestIdToken). Configure with:
+##   - Package name: com.expenselens
+##   - SHA-1: <your debug keystore SHA-1> (run `keytool -list -v
+##     -keystore ~/.android/debug.keystore -storepass android -alias
+##     androiddebugkey | grep SHA1`)
+## The Client Secret is NOT needed (Supabase verifies the ID token
+## against Google's public JWKS, not via shared secret).
+## Leave blank to keep working in Drive-only mode (no cloud sync).
+# google.web.client.id=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com
