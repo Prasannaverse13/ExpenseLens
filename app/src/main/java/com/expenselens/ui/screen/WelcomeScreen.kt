@@ -24,12 +24,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -44,6 +54,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -52,11 +66,15 @@ import androidx.lifecycle.viewModelScope
 import com.expenselens.data.auth.GoogleAuthManager
 import com.expenselens.data.auth.TokenStore
 import com.expenselens.data.prefs.AppPreferences
+import com.expenselens.data.supabase.SupabaseClientProvider
 import com.expenselens.ui.common.ExBrandMark
 import com.expenselens.ui.common.GrainientBackground
 import com.expenselens.ui.theme.Emerald500
 import com.expenselens.ui.theme.Emerald800
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.gotrue.auth
+import io.github.jan.supabase.gotrue.providers.builtin.Email
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -82,13 +100,18 @@ class WelcomeViewModel @Inject constructor(
     private val auth: GoogleAuthManager,
     private val prefs: AppPreferences,
     private val throttle: com.expenselens.data.auth.SignInThrottle,
-    private val syncCoordinator: com.expenselens.data.sync.SyncCoordinator
+    private val syncCoordinator: com.expenselens.data.sync.SyncCoordinator,
+    private val supabase: SupabaseClientProvider
 ) : ViewModel() {
+
+    /** Which email/password mode the form is in. */
+    enum class Tab { SignIn, SignUp }
 
     sealed class State {
         object Idle : State()
         object SigningIn : State()
         data class Error(val message: String) : State()
+        data class Info(val message: String) : State()
     }
 
     private val _state = MutableStateFlow<State>(State.Idle)
@@ -96,6 +119,18 @@ class WelcomeViewModel @Inject constructor(
 
     val throttleState: StateFlow<com.expenselens.data.auth.SignInThrottle.ThrottleState> =
         throttle.state
+
+    /** Sign in vs Create account tab. */
+    private val _tab = MutableStateFlow(Tab.SignIn)
+    val tab: StateFlow<Tab> = _tab.asStateFlow()
+
+    fun setTab(t: Tab) {
+        if (_tab.value != t) {
+            _tab.value = t
+            // Clear stale errors when switching tabs
+            _state.value = State.Idle
+        }
+    }
 
     /**
      * First-time vs returning. Drives the screen's hero copy:
@@ -164,6 +199,164 @@ class WelcomeViewModel @Inject constructor(
         }
     }
 
+    // ===== Email / password auth =====
+
+    /**
+     * Sign in with email + password. Validates locally first so the
+     * user gets instant feedback for typos before we hit the network.
+     */
+    fun signInWithEmail(email: String, password: String, onSuccess: () -> Unit) {
+        val cleanEmail = email.trim()
+        if (!isValidEmail(cleanEmail)) {
+            _state.value = State.Error("Please enter a valid email address.")
+            return
+        }
+        if (password.length < MIN_PASSWORD_LEN) {
+            _state.value = State.Error("Password must be at least $MIN_PASSWORD_LEN characters.")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = State.SigningIn
+            try {
+                val sb = supabase.client
+                    ?: throw IllegalStateException("Supabase not configured")
+                sb.auth.signInWith(Email) {
+                    this.email = cleanEmail
+                    this.password = password
+                }
+                onEmailAuthSuccess(cleanEmail, onSuccess)
+            } catch (t: Throwable) {
+                _state.value = State.Error(mapEmailAuthError(t))
+                android.util.Log.w(TAG, "email signIn failed: ${t.message}")
+            }
+        }
+    }
+
+    /**
+     * Create a new account with email + password. Supabase will
+     * either auto-confirm (if email confirmation is off in the
+     * dashboard) or send a verification email (if it's on).
+     */
+    fun signUpWithEmail(email: String, password: String, onSuccess: () -> Unit) {
+        val cleanEmail = email.trim()
+        if (!isValidEmail(cleanEmail)) {
+            _state.value = State.Error("Please enter a valid email address.")
+            return
+        }
+        if (password.length < MIN_PASSWORD_LEN) {
+            _state.value = State.Error("Password must be at least $MIN_PASSWORD_LEN characters.")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = State.SigningIn
+            try {
+                val sb = supabase.client
+                    ?: throw IllegalStateException("Supabase not configured")
+                sb.auth.signUpWith(Email) {
+                    this.email = cleanEmail
+                    this.password = password
+                }
+                // Two outcomes after signUp:
+                //  - email confirmation OFF  → session is returned immediately
+                //  - email confirmation ON   → session is null, user must verify
+                val session = sb.auth.currentSessionOrNull()
+                if (session != null) {
+                    onEmailAuthSuccess(cleanEmail, onSuccess)
+                } else {
+                    _state.value = State.Info(
+                        "Account created. Check your email to confirm, then sign in."
+                    )
+                }
+            } catch (t: Throwable) {
+                _state.value = State.Error(mapEmailAuthError(t))
+                android.util.Log.w(TAG, "email signUp failed: ${t.message}")
+            }
+        }
+    }
+
+    /** Send a password-reset email. No state change on success. */
+    fun resetPassword(email: String) {
+        val cleanEmail = email.trim()
+        if (!isValidEmail(cleanEmail)) {
+            _state.value = State.Error("Please enter a valid email address.")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = State.SigningIn
+            try {
+                val sb = supabase.client
+                    ?: throw IllegalStateException("Supabase not configured")
+                sb.auth.resetPasswordForEmail(cleanEmail)
+                _state.value = State.Info(
+                    "Password reset email sent. Check your inbox."
+                )
+            } catch (t: Throwable) {
+                _state.value = State.Error(mapEmailAuthError(t))
+                android.util.Log.w(TAG, "resetPassword failed: ${t.message}")
+            }
+        }
+    }
+
+    /** Common post-success hook for both email sign-in and sign-up. */
+    private suspend fun onEmailAuthSuccess(email: String, onSuccess: () -> Unit) {
+        throttle.recordSuccess()
+        prefs.setDriveConnected(true)
+        prefs.setDriveAccount(email)
+        prefs.setDriveAccountName(email.substringBefore('@'))
+        prefs.setHasSignedInBefore(true)
+        try {
+            syncCoordinator.runMigrationIfNeeded()
+        } catch (t: Throwable) {
+            android.util.Log.w(TAG, "migration failed: ${t.message}")
+        }
+        try {
+            syncCoordinator.pullOnStart()
+        } catch (t: Throwable) {
+            android.util.Log.w(TAG, "pullOnStart failed: ${t.message}")
+        }
+        _state.value = State.Idle
+        onSuccess()
+    }
+
+    /** Loose email regex — matches `x@y.z` and stops there. */
+    private fun isValidEmail(raw: String): Boolean =
+        android.util.Patterns.EMAIL_ADDRESS.matcher(raw).matches()
+
+    /**
+     * Supabase throws [RestException] with a `error` field on the body.
+     * The user sees the human label, not the raw status code.
+     */
+    private fun mapEmailAuthError(t: Throwable): String {
+        if (t is RestException) {
+            // Supabase error body looks like: {"error":"invalid_grant","error_description":"Invalid login credentials"}
+            val desc = (t.description ?: "").lowercase()
+            val err = (t.error ?: "").lowercase()
+            return when {
+                "invalid login credentials" in desc ||
+                    "invalid_grant" in err ||
+                    "invalid email or password" in desc ->
+                    "Wrong email or password. Try again or use 'Forgot password'."
+                "user already registered" in desc ||
+                    "user_already_exists" in err ||
+                    "already registered" in desc ->
+                    "An account with that email already exists. Try signing in instead."
+                "password should be at least" in desc ||
+                    "weak password" in desc ||
+                    "characters" in desc ->
+                    "Password is too weak. Use at least $MIN_PASSWORD_LEN characters with a mix of letters and numbers."
+                "email rate limit" in desc ||
+                    "email_address" in err && "rate" in desc ->
+                    "Too many attempts. Please wait a few minutes and try again."
+                "signup_disabled" in err ->
+                    "New sign-ups are temporarily disabled. Please try again later."
+                "network" in desc || "timeout" in desc ->
+                    "Network problem. Check your connection and try again."
+                else -> "Sign-in failed. Please check your details and try again."
+            }
+        }
+        return t.message?.takeIf { it.isNotBlank() } ?: "Sign-in failed. Please try again."
+    }
+
     fun clearError() { _state.value = State.Idle }
 
     /**
@@ -171,25 +364,14 @@ class WelcomeViewModel @Inject constructor(
      * sign-in state. Shown as a small "Having trouble?" button on the
      * Welcome screen. Lets the user recover from a lockout without
      * uninstalling or clearing app data.
-     *
-     *  - Safe to call anytime.
-     *  - Does NOT clear local bills — those stay in Room and re-sync
-     *    to Supabase on the next successful sign-in.
-     *  - Does NOT touch the OAuth client config (if sign-in is failing
-     *    because of a SHA-1 mismatch, this button will help them retry,
-     *    but they still need to fix the SHA-1 to actually sign in).
      */
     fun resetAttempts() {
         viewModelScope.launch {
             try {
-                // Clear the cached Google account + tokens so the
-                // system shows the account picker instead of jumping
-                // straight to the previously-failed account.
                 auth.signOut()
             } catch (t: Throwable) {
                 android.util.Log.w(TAG, "signOut during reset: ${t.message}")
             }
-            // Wipe the throttle counter and the lockout deadline.
             throttle.reset()
             _state.value = State.Idle
         }
@@ -201,14 +383,14 @@ class WelcomeViewModel @Inject constructor(
      * never returns (network drop, etc).
      */
     fun registerAttempt() {
-        // No-op here — the system returns a result whether the user
+        // No-op — the system returns a result whether the user
         // signed in successfully or cancelled, so the success path above
-        // is the only place that needs to record anything. Kept for
-        // future use if we add a network probe before launching.
+        // is the only place that needs to record anything.
     }
 
     companion object {
         private const val TAG = "WelcomeViewModel"
+        private const val MIN_PASSWORD_LEN = 8
     }
 }
 
@@ -315,16 +497,153 @@ fun WelcomeScreen(
 
             Spacer(Modifier.height(40.dp))
 
-            // Primary CTA — "Continue with Google" handles both
-            // sign-in (returning) and sign-up (first-time) without
-            // splitting the UI into two tabs the user has to choose
-            // between. Supabase auto-creates the account on first
-            // successful sign-in.
+            // ===== Email / password form =====
+            // Tab toggle between "Sign in" and "Create account". The
+            // form below adapts: Sign in gets a "Forgot password?"
+            // link, Create account gets a "min 8 characters" hint.
+            val currentTab by vm.tab.collectAsState()
+            TabRow(
+                selectedTabIndex = if (currentTab == WelcomeViewModel.Tab.SignIn) 0 else 1,
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                indicator = { tabPositions ->
+                    if (currentTab.ordinal < tabPositions.size) {
+                        TabRowDefaults.SecondaryIndicator(
+                            modifier = Modifier.tabIndicatorOffset(tabPositions[currentTab.ordinal]),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            ) {
+                Tab(
+                    selected = currentTab == WelcomeViewModel.Tab.SignIn,
+                    onClick = { vm.setTab(WelcomeViewModel.Tab.SignIn) },
+                    text = {
+                        Text(
+                            "Sign in",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = if (currentTab == WelcomeViewModel.Tab.SignIn)
+                                FontWeight.SemiBold else FontWeight.Normal
+                        )
+                    }
+                )
+                Tab(
+                    selected = currentTab == WelcomeViewModel.Tab.SignUp,
+                    onClick = { vm.setTab(WelcomeViewModel.Tab.SignUp) },
+                    text = {
+                        Text(
+                            "Create account",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = if (currentTab == WelcomeViewModel.Tab.SignUp)
+                                FontWeight.SemiBold else FontWeight.Normal
+                        )
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Email field
+            var email by remember { mutableStateOf("") }
+            var password by remember { mutableStateOf("") }
+            var passwordVisible by remember { mutableStateOf(false) }
+
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it },
+                label = { Text("Email") },
+                singleLine = true,
+                enabled = state !is WelcomeViewModel.State.SigningIn,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = KeyboardType.Email,
+                    imeAction = ImeAction.Next
+                ),
+                modifier = Modifier.fillMaxWidth(),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                )
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            // Password field with show/hide toggle
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Password") },
+                singleLine = true,
+                enabled = state !is WelcomeViewModel.State.SigningIn,
+                visualTransformation = if (passwordVisible) VisualTransformation.None
+                else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Icon(
+                            imageVector = if (passwordVisible) Icons.Filled.VisibilityOff
+                            else Icons.Filled.Visibility,
+                            contentDescription = if (passwordVisible) "Hide password"
+                            else "Show password",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.Done
+                ),
+                modifier = Modifier.fillMaxWidth(),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                ),
+                supportingText = {
+                    if (currentTab == WelcomeViewModel.Tab.SignUp) {
+                        Text(
+                            "At least 8 characters",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            )
+
+            // Forgot password — only on the Sign in tab.
+            if (currentTab == WelcomeViewModel.Tab.SignIn) {
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        onClick = { vm.resetPassword(email) },
+                        enabled = state !is WelcomeViewModel.State.SigningIn
+                    ) {
+                        Text(
+                            "Forgot password?",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Email primary button — "Sign in" or "Create account"
+            // depending on the active tab. Shows the same loading
+            // spinner as the Google flow when in flight.
+            val isSigningIn = state is WelcomeViewModel.State.SigningIn
             Button(
                 onClick = {
-                    if (!blocked) signInLauncher.launch(vm.buildSignInIntent())
+                    when (currentTab) {
+                        WelcomeViewModel.Tab.SignIn ->
+                            vm.signInWithEmail(email, password, onSignedIn)
+                        WelcomeViewModel.Tab.SignUp ->
+                            vm.signUpWithEmail(email, password, onSignedIn)
+                    }
                 },
-                enabled = !blocked && state !is WelcomeViewModel.State.SigningIn,
+                enabled = !blocked && !isSigningIn && email.isNotBlank() && password.isNotBlank(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
@@ -333,14 +652,7 @@ fun WelcomeScreen(
                     containerColor = MaterialTheme.colorScheme.primary
                 )
             ) {
-                if (blocked) {
-                    Text(
-                        "Locked — ${formatRemaining(remaining)}",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                } else if (state is WelcomeViewModel.State.SigningIn) {
+                if (isSigningIn) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
                         color = Color.White,
@@ -348,16 +660,80 @@ fun WelcomeScreen(
                     )
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        if (hasSignedInBefore) "Signing you in…" else "Creating your account…",
+                        when (currentTab) {
+                            WelcomeViewModel.Tab.SignIn -> "Signing in…"
+                            WelcomeViewModel.Tab.SignUp -> "Creating account…"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold
                     )
                 } else {
                     Text(
-                        "Continue with Google",
+                        when (currentTab) {
+                            WelcomeViewModel.Tab.SignIn -> "Sign in"
+                            WelcomeViewModel.Tab.SignUp -> "Create account"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            // "or" divider with Google option
+            Spacer(Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant)
+                )
+                Text(
+                    "  or continue with  ",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant)
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Google sign-in button — unchanged from before, works
+            // alongside the email form.
+            Button(
+                onClick = {
+                    if (!blocked) signInLauncher.launch(vm.buildSignInIntent())
+                },
+                enabled = !blocked && !isSigningIn,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                )
+            ) {
+                if (blocked) {
+                    Text(
+                        "Locked — ${formatRemaining(remaining)}",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                } else {
+                    Text(
+                        "Continue with Google",
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -388,13 +764,29 @@ fun WelcomeScreen(
                 )
             }
 
+            // Info message — used for "check your email to confirm"
+            // and "password reset email sent". Different from Error:
+            // not red, just informational.
+            (state as? WelcomeViewModel.State.Info)?.let { info ->
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    info.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
             // Reset escape hatch: shown whenever the user has had at
             // least one failed attempt or is locked out. A small,
             // low-emphasis TextButton — doesn't compete with the main
             // sign-in CTA but is discoverable. Tapping it clears the
             // throttle counter + cached Google state so the user can
             // try again immediately (no 1-hour wait, no uninstall).
-            if (blocked || throttle.attempts >= 1 || state is WelcomeViewModel.State.Error) {
+            if (blocked || throttle.attempts >= 1 ||
+                state is WelcomeViewModel.State.Error
+            ) {
                 Spacer(Modifier.height(12.dp))
                 androidx.compose.material3.TextButton(
                     onClick = { vm.resetAttempts() },
