@@ -59,8 +59,10 @@ import com.expenselens.ui.theme.Emerald800
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -95,6 +97,18 @@ class WelcomeViewModel @Inject constructor(
     val throttleState: StateFlow<com.expenselens.data.auth.SignInThrottle.ThrottleState> =
         throttle.state
 
+    /**
+     * First-time vs returning. Drives the screen's hero copy:
+     *   - false → "Get started" / "We'll create your account"
+     *   - true  → "Welcome back" / "Sign in to continue"
+     */
+    val hasSignedInBefore: StateFlow<Boolean> = prefs.hasSignedInBefore
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            false
+        )
+
     fun buildSignInIntent() = auth.signInIntent()
 
     /** Check the throttle. Returns null if the user can sign in now. */
@@ -112,6 +126,10 @@ class WelcomeViewModel @Inject constructor(
                     prefs.setDriveConnected(true)
                     prefs.setDriveAccount(r.email)
                     prefs.setDriveAccountName(r.displayName)
+                    // First successful sign-in on this device — flip
+                    // the flag so the Welcome screen switches to
+                    // "Welcome back" copy on subsequent launches.
+                    prefs.setHasSignedInBefore(true)
                     // Run the one-time Drive → Supabase migration
                     // (no-op if already done). Then pull the new user's
                     // latest data from Supabase so they see their own
@@ -201,6 +219,7 @@ fun WelcomeScreen(
 ) {
     val state by vm.state.collectAsState()
     val throttle by vm.throttleState.collectAsState()
+    val hasSignedInBefore by vm.hasSignedInBefore.collectAsState()
     val context = LocalContext.current
 
     val signInLauncher = rememberLauncherForActivityResult(
@@ -271,8 +290,11 @@ fun WelcomeScreen(
 
             Spacer(Modifier.height(28.dp))
 
+            // Hero copy — first-time vs returning.
+            // First-time: "Welcome to ExpenseLens" / "Capture bills in seconds."
+            // Returning:   "Welcome back"          / "Sign in to your account."
             Text(
-                text = "Welcome to ExpenseLens",
+                text = if (hasSignedInBefore) "Welcome back" else "Welcome to ExpenseLens",
                 style = MaterialTheme.typography.displaySmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Bold,
@@ -283,7 +305,8 @@ fun WelcomeScreen(
             Spacer(Modifier.height(12.dp))
 
             Text(
-                text = "Capture bills in seconds. Yours to keep.",
+                text = if (hasSignedInBefore) "Sign in to continue."
+                else "Capture bills in seconds. Yours to keep.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth(),
@@ -292,7 +315,11 @@ fun WelcomeScreen(
 
             Spacer(Modifier.height(40.dp))
 
-            // Sign in button
+            // Primary CTA — "Continue with Google" handles both
+            // sign-in (returning) and sign-up (first-time) without
+            // splitting the UI into two tabs the user has to choose
+            // between. Supabase auto-creates the account on first
+            // successful sign-in.
             Button(
                 onClick = {
                     if (!blocked) signInLauncher.launch(vm.buildSignInIntent())
@@ -321,14 +348,14 @@ fun WelcomeScreen(
                     )
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        "Signing in…",
+                        if (hasSignedInBefore) "Signing you in…" else "Creating your account…",
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold
                     )
                 } else {
                     Text(
-                        "Sign in with Google",
+                        "Continue with Google",
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold
@@ -382,13 +409,16 @@ fun WelcomeScreen(
                 }
             }
 
-            // First-time hint: explain that Google Sign-In is also
-            // signup. Shown only on a clean state (no failed attempts)
-            // so it doesn't fight the error copy.
+            // Hint copy — first-time vs returning. Only shown on a
+            // clean state (no failed attempts) so it doesn't fight
+            // the error copy.
             if (!blocked && throttle.attempts == 0 && state !is WelcomeViewModel.State.Error) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "First time here? Your account is created on first sign-in.",
+                    text = if (hasSignedInBefore)
+                        "Your account and bills are safe in the cloud."
+                    else
+                        "First time here? Your account is created on first sign-in.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,

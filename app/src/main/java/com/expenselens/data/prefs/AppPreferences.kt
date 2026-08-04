@@ -56,6 +56,17 @@ class AppPreferences(private val context: Context) {
     private val keyMigratedToSupabase = booleanPreferencesKey("migrated_to_supabase")
     private val keySupabaseLastSync = longPreferencesKey("supabase_last_sync") // epoch millis
 
+    /**
+     * "Has this device ever completed a Google sign-in?"
+     * Used by the Welcome screen to choose copy:
+     *   - false → first-time: "Get started", "We'll create your account"
+     *   - true  → returning: "Welcome back", "Sign in to continue"
+     * Different from driveConnected (which is current-session state).
+     * This survives a sign-out, an app reinstall is the only thing
+     * that clears it — at which point the device IS effectively new.
+     */
+    private val keyHasSignedInBefore = booleanPreferencesKey("has_signed_in_before")
+
     val currency: Flow<String> = context.dataStore.data.map { it[keyCurrency] ?: "INR" }
     val defaultPayment: Flow<PaymentMethod> =
         context.dataStore.data.map { PaymentMethod.fromName(it[keyPayment]) }
@@ -87,6 +98,8 @@ class AppPreferences(private val context: Context) {
 
     val hasMigratedToSupabase: Flow<Boolean> = context.dataStore.data.map { it[keyMigratedToSupabase] ?: false }
     val supabaseLastSync: Flow<Long> = context.dataStore.data.map { it[keySupabaseLastSync] ?: 0L }
+
+    val hasSignedInBefore: Flow<Boolean> = context.dataStore.data.map { it[keyHasSignedInBefore] ?: false }
 
     suspend fun snapshot(): Preferences = context.dataStore.data.first()
 
@@ -150,5 +163,9 @@ class AppPreferences(private val context: Context) {
 
     suspend fun setSupabaseLastSync(epochMillis: Long) = context.dataStore.edit {
         it[keySupabaseLastSync] = epochMillis
+    }
+
+    suspend fun setHasSignedInBefore(value: Boolean) = context.dataStore.edit {
+        it[keyHasSignedInBefore] = value
     }
 }
