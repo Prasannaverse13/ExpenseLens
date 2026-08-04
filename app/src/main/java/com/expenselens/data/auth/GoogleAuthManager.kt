@@ -86,11 +86,22 @@ class GoogleAuthManager(
         } catch (e: ApiException) {
             val msg = when (e.statusCode) {
                 GoogleSignInStatusCodes.SIGN_IN_CANCELLED -> "Sign-in cancelled"
-                GoogleSignInStatusCodes.SIGN_IN_FAILED -> "Sign-in failed: ${e.message}"
-                GoogleSignInStatusCodes.SIGN_IN_CURRENTLY_IN_PROGRESS -> "Already in progress"
-                else -> "Sign-in error (${e.statusCode}): ${e.message}"
+                GoogleSignInStatusCodes.SIGN_IN_FAILED ->
+                    "Sign-in failed. Check your internet and try again."
+                GoogleSignInStatusCodes.SIGN_IN_CURRENTLY_IN_PROGRESS ->
+                    "Sign-in already in progress."
+                GoogleSignInStatusCodes.NETWORK_ERROR ->
+                    "No internet. Check your connection and try again."
+                GoogleSignInStatusCodes.TIMEOUT ->
+                    "Sign-in timed out. Please try again."
+                GoogleSignInStatusCodes.INVALID_ACCOUNT ->
+                    "That Google account is not available on this device."
+                else -> "Sign-in failed. Please try again."
             }
-            Log.w(TAG, "Sign-in failed: $msg")
+            // Keep the raw code in logcat for debugging — users don't
+            // need to see it, but we want it in the trace if they
+            // report an issue.
+            Log.w(TAG, "Sign-in failed (code=${e.statusCode}): ${e.message}")
             return@withContext SignInResult.Error(msg)
         }
         val email = account.email ?: return@withContext SignInResult.Error("No email on account")

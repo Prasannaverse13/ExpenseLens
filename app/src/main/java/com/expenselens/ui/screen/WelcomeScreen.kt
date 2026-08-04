@@ -149,6 +149,35 @@ class WelcomeViewModel @Inject constructor(
     fun clearError() { _state.value = State.Idle }
 
     /**
+     * Escape hatch: clear the sign-in throttle AND the cached Google
+     * sign-in state. Shown as a small "Having trouble?" button on the
+     * Welcome screen. Lets the user recover from a lockout without
+     * uninstalling or clearing app data.
+     *
+     *  - Safe to call anytime.
+     *  - Does NOT clear local bills — those stay in Room and re-sync
+     *    to Supabase on the next successful sign-in.
+     *  - Does NOT touch the OAuth client config (if sign-in is failing
+     *    because of a SHA-1 mismatch, this button will help them retry,
+     *    but they still need to fix the SHA-1 to actually sign in).
+     */
+    fun resetAttempts() {
+        viewModelScope.launch {
+            try {
+                // Clear the cached Google account + tokens so the
+                // system shows the account picker instead of jumping
+                // straight to the previously-failed account.
+                auth.signOut()
+            } catch (t: Throwable) {
+                android.util.Log.w(TAG, "signOut during reset: ${t.message}")
+            }
+            // Wipe the throttle counter and the lockout deadline.
+            throttle.reset()
+            _state.value = State.Idle
+        }
+    }
+
+    /**
      * Called by the UI when the user taps the sign-in button so we can
      * record a "user actually attempted" failure if the system flow
      * never returns (network drop, etc).
@@ -158,6 +187,10 @@ class WelcomeViewModel @Inject constructor(
         // signed in successfully or cancelled, so the success path above
         // is the only place that needs to record anything. Kept for
         // future use if we add a network probe before launching.
+    }
+
+    companion object {
+        private const val TAG = "WelcomeViewModel"
     }
 }
 
@@ -323,6 +356,41 @@ fun WelcomeScreen(
                     err.message,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Reset escape hatch: shown whenever the user has had at
+            // least one failed attempt or is locked out. A small,
+            // low-emphasis TextButton — doesn't compete with the main
+            // sign-in CTA but is discoverable. Tapping it clears the
+            // throttle counter + cached Google state so the user can
+            // try again immediately (no 1-hour wait, no uninstall).
+            if (blocked || throttle.attempts >= 1 || state is WelcomeViewModel.State.Error) {
+                Spacer(Modifier.height(12.dp))
+                androidx.compose.material3.TextButton(
+                    onClick = { vm.resetAttempts() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (blocked) "Stuck? Reset and try again"
+                        else "Having trouble? Reset sign-in",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+
+            // First-time hint: explain that Google Sign-In is also
+            // signup. Shown only on a clean state (no failed attempts)
+            // so it doesn't fight the error copy.
+            if (!blocked && throttle.attempts == 0 && state !is WelcomeViewModel.State.Error) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "First time here? Your account is created on first sign-in.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
                 )
