@@ -61,6 +61,8 @@ import androidx.lifecycle.viewModelScope
 import com.expenselens.data.db.CategoryEntity
 import com.expenselens.data.db.CategoryTotal
 import com.expenselens.data.db.ExpenseEntity
+import com.expenselens.data.insights.SpendingInsight
+import com.expenselens.data.insights.SpendingInsightsEngine
 import com.expenselens.data.repo.ExpenseRepository
 import com.expenselens.export.ExportService
 import com.expenselens.ui.common.BrandAvatar
@@ -104,7 +106,9 @@ data class DashboardState(
     val categories: List<CategoryEntity> = emptyList(),
     val recent: List<ExpenseEntity> = emptyList(),
     val userName: String = "",
-    val userEmail: String = ""
+    val userEmail: String = "",
+    val insights: List<SpendingInsight> = emptyList(),
+    val isPremium: Boolean = false
 )
 
 @HiltViewModel
@@ -126,7 +130,7 @@ class DashboardViewModel @Inject constructor(
         val monthStart = today.withDayOfMonth(1)
         val lastMonthStart = monthStart.minusMonths(1)
         val lastMonthEnd = monthStart.minusDays(1)
-        // Use the array-form combine() so we can fan in 6 flows (the
+        // Use the array-form combine() so we can fan in 7 flows (the
         // vararg overload only goes up to 5).
         combine(
             repo.observeCategoryTotals(monthStart, today),
@@ -134,26 +138,48 @@ class DashboardViewModel @Inject constructor(
             repo.observeAll(),
             repo.categoryFlow(),
             userName,
-            userEmail
+            userEmail,
+            prefs.isPremium
         ) { values ->
             @Suppress("UNCHECKED_CAST")
-            val thisMonth = values[0] as List<CategoryTotal>
+            val thisMonthTotals = values[0] as List<CategoryTotal>
             @Suppress("UNCHECKED_CAST")
-            val prevMonth = values[1] as List<CategoryTotal>
+            val prevMonthTotals = values[1] as List<CategoryTotal>
             @Suppress("UNCHECKED_CAST")
             val all = values[2] as List<ExpenseEntity>
             @Suppress("UNCHECKED_CAST")
             val cats = values[3] as List<CategoryEntity>
             val name = values[4] as String
             val email = values[5] as String
+            val premium = values[6] as Boolean
+
+            // Insights use only the in-month subset, plus the pre-aggregated
+            // totals — pure computation, no extra queries.
+            val thisMonthExpenses = all.filter {
+                val d = it.billDate
+                !d.isBefore(monthStart) && !d.isAfter(today)
+            }
+            // Pass `all` so the engine can detect recurring vendors
+            // (UpcomingRecurring, UnusedRecurring) and per-vendor MoM.
+            val insights = SpendingInsightsEngine.generate(
+                thisMonth = thisMonthExpenses,
+                thisMonthTotals = thisMonthTotals,
+                lastMonthTotals = prevMonthTotals,
+                allExpenses = all,
+                categories = cats,
+                today = today
+            )
+
             DashboardState(
-                month = thisMonth.sumOf { it.total },
-                lastMonth = prevMonth.sumOf { it.total },
-                categoryTotals = thisMonth,
+                month = thisMonthTotals.sumOf { it.total },
+                lastMonth = prevMonthTotals.sumOf { it.total },
+                categoryTotals = thisMonthTotals,
                 categories = cats,
                 recent = all.take(8),
                 userName = name,
-                userEmail = email
+                userEmail = email,
+                insights = insights,
+                isPremium = premium
             )
         }.stateIn(viewModelScope, SharingStarted.Eagerly, DashboardState())
     }
@@ -219,6 +245,15 @@ fun DashboardScreen(
                         month = state.month,
                         lastMonth = state.lastMonth
                     )
+                }
+
+                if (state.insights.isNotEmpty()) {
+                    item {
+                        InsightsCarousel(
+                            insights = state.insights,
+                            isPremium = state.isPremium
+                        )
+                    }
                 }
 
                 item {
